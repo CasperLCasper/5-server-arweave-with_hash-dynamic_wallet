@@ -8,6 +8,13 @@ const WALLET_NFT_ABI = [
   "function getNonce(address wallet) public view returns (uint256)"
 ];
 
+// Palīgfunkcija BigInt serializācijai
+function serializeBigInt(obj) {
+  return JSON.parse(JSON.stringify(obj, (key, value) =>
+    typeof value === 'bigint' ? value.toString() : value
+  ));
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -62,7 +69,6 @@ export async function onRequestPost(context) {
 
     let fullMetadataUri = metadataUri.trim();
     
-    // Handle Arweave transaction IDs
     if (fullMetadataUri.startsWith('Qm') || fullMetadataUri.startsWith('baf')) {
       fullMetadataUri = `https://turbo-gateway.com/${fullMetadataUri}`;
     } else if (fullMetadataUri.startsWith('ipfs://')) {
@@ -100,48 +106,12 @@ export async function onRequestPost(context) {
     const serverWallet = new ethers.Wallet(SERVER_PRIVATE_KEY);
     const serverAddress = await serverWallet.getAddress();
 
-    // 🔍 DEBUG: Izvada visu informāciju priekš diagnostikas
-    console.log('═══════════════════════════════════════');
-    console.log('🔍 MINT DIAGNOSTICS START');
-    console.log('═══════════════════════════════════════');
-    console.log('📋 User wallet:', wallet);
-    console.log('📋 Server signer address:', serverAddress);
-    console.log('📋 Contract address:', CONTRACT_ADDRESS);
-    console.log('📋 Mint price (wei):', mintPrice.toString());
-    console.log('📋 Mint price (ETH):', ethers.formatEther(mintPrice));
-    console.log('📋 Current nonce for user:', currentNonce.toString());
-    console.log('📋 Image hash:', finalImageHash);
-    console.log('📋 Video hash:', finalVideoHash);
-    console.log('📋 Metadata URI:', fullMetadataUri);
-
-    // Pārbauda signer adresi kontraktā (ja kontraktam ir šāda funkcija)
-    try {
-      // Mēģinām nolasīt signer no kontrakta (ja ir public mainīgais)
-      const contractSigner = await contract.signer();
-      console.log('📋 Contract signer variable:', contractSigner);
-      console.log('✅ Signer match:', contractSigner.toLowerCase() === serverAddress.toLowerCase() ? 'YES ✅' : 'NO ❌');
-    } catch (e) {
-      // Kontraktam nav šādas funkcijas, tas ir OK
-      console.log('⚠️ Cannot read signer from contract (may not have public getter):', e.message);
-    }
-
-    // Pārbauda serverWallet adreses ETH bilanci
-    try {
-      const serverBalance = await provider.getBalance(serverAddress);
-      console.log('📋 Server wallet ETH balance:', ethers.formatEther(serverBalance), 'ETH');
-      console.log('📋 Sufficient for mint?', serverBalance >= mintPrice ? 'YES ✅' : 'NO ❌ - NEED MORE ETH');
-    } catch (e) {
-      console.log('⚠️ Cannot check server balance:', e.message);
-    }
-
-    // Pārbauda lietotāja ETH bilanci
-    try {
-      const userBalance = await provider.getBalance(wallet);
-      console.log('📋 User wallet ETH balance:', ethers.formatEther(userBalance), 'ETH');
-      console.log('📋 User sufficient for mint?', userBalance >= mintPrice ? 'YES ✅' : 'NO ❌');
-    } catch (e) {
-      console.log('⚠️ Cannot check user balance:', e.message);
-    }
+    console.log('🔍 MINT DEBUG:');
+    console.log('  User wallet:', wallet);
+    console.log('  Server address:', serverAddress);
+    console.log('  Contract:', CONTRACT_ADDRESS);
+    console.log('  Mint price (ETH):', ethers.formatEther(mintPrice));
+    console.log('  Nonce:', currentNonce.toString());
 
     const domain = {
       name: 'WalletVisualizer',
@@ -168,31 +138,8 @@ export async function onRequestPost(context) {
       nonce: currentNonce
     };
 
-    console.log('📋 Domain separator:', JSON.stringify(domain, null, 2));
-    console.log('📋 Value to sign:', JSON.stringify(value, null, 2));
-
-    let signature;
-    try {
-      signature = await serverWallet.signTypedData(domain, types, value);
-      console.log('📋 Signature:', signature);
-    } catch (signErr) {
-      console.error('❌ Signing failed:', signErr);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: 'Signing failed: ' + signErr.message 
-      }), {
-        status: 500, headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    // Verify the signature locally
-    try {
-      const recoveredAddress = ethers.verifyTypedData(domain, types, value, signature);
-      console.log('📋 Recovered address from signature:', recoveredAddress);
-      console.log('✅ Signature verification:', recoveredAddress.toLowerCase() === serverAddress.toLowerCase() ? 'VALID ✅' : 'INVALID ❌');
-    } catch (verifyErr) {
-      console.error('❌ Local signature verification failed:', verifyErr.message);
-    }
+    const signature = await serverWallet.signTypedData(domain, types, value);
+    console.log('  Signature:', signature.substring(0, 20) + '...');
 
     const iface = new ethers.Interface(WALLET_NFT_ABI);
     const data = iface.encodeFunctionData('mintWithSignature', [
@@ -204,8 +151,6 @@ export async function onRequestPost(context) {
       signature
     ]);
 
-    console.log('📋 Encoded function data:', data);
-
     let estimatedGas;
     try {
       estimatedGas = await provider.estimateGas({
@@ -215,42 +160,34 @@ export async function onRequestPost(context) {
         value: mintPrice
       });
       estimatedGas = (estimatedGas * 120n) / 100n;
-      console.log('📋 Estimated gas:', estimatedGas.toString());
-    } catch (gasErr) {
-      console.error('⚠️ Gas estimation failed (this is a strong indicator of revert):', gasErr.message);
+    } catch (err) {
+      console.warn('Gas estimation failed:', err.message);
       estimatedGas = 350000n;
-      console.log('📋 Using fallback gas:', estimatedGas.toString());
     }
 
-    console.log('═══════════════════════════════════════');
-    console.log('🔍 MINT DIAGNOSTICS END');
-    console.log('═══════════════════════════════════════');
+    console.log('  Estimated gas:', estimatedGas.toString());
+    console.log('✅ MINT PREPARED');
 
-    return new Response(JSON.stringify({
+    // Izmanto serializeBigInt, lai visas BigInt vērtības būtu string
+    const responseData = serializeBigInt({
       success: true,
       transaction: {
         to: CONTRACT_ADDRESS,
         data: data,
-        value: mintPrice.toString(),
-        gasLimit: estimatedGas.toString()
+        value: mintPrice,
+        gasLimit: estimatedGas
       },
       imageHash: finalImageHash,
       videoHash: finalVideoHash !== ethers.ZeroHash ? finalVideoHash : null,
-      metadataUri: fullMetadataUri,
-      // Pievieno diagnostikas info priekš frontend
-      debug: {
-        serverAddress,
-        mintPriceWei: mintPrice.toString(),
-        mintPriceEth: ethers.formatEther(mintPrice),
-        currentNonce: currentNonce.toString(),
-        estimatedGas: estimatedGas.toString()
-      }
-    }), {
+      metadataUri: fullMetadataUri
+    });
+
+    return new Response(JSON.stringify(responseData), {
       status: 200, headers: { "Content-Type": "application/json" }
     });
 
   } catch (error) {
-    console.error('💥 Unhandled error:', error);
+    console.error('💥 Mint error:', error);
     return new Response(JSON.stringify({ success: false, error: 'Server error: ' + error.message }), {
       status: 500, headers: { "Content-Type": "application/json" }
     });
