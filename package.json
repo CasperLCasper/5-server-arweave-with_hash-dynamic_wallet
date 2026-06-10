@@ -1,7 +1,7 @@
 {
   "name": "nft-base-sepolia-testnet",
-  "version": "1.0.0",
-  "description": "Web3 NFT minting platform on Base Sepolia with Lighthouse IPFS",
+  "version": "2.0.0",
+  "description": "Web3 NFT minting platform on Base Sepolia with Arweave/Turbo permanent storage",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@lighthouse-web3/sdk": "^0.4.5",
+    "@ardrive/turbo-sdk": "^1.41.3",
     "@upstash/redis": "^1.28.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -29,8 +29,9 @@
     "web3",
     "base",
     "sepolia",
-    "ipfs",
-    "lighthouse"
+    "arweave",
+    "turbo",
+    "permanent-storage"
   ],
   "author": "",
   "license": "ISC"
