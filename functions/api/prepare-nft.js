@@ -1,6 +1,6 @@
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
-import lighthouse from '@lighthouse-web3/sdk';
+import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 import crypto from 'crypto';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'video/mp4', 'video/webm'];
@@ -83,7 +83,7 @@ export async function onRequestPost(context) {
       videoBuffer = Buffer.from(videoArrayBuffer);
     }
 
-    console.log(`🚀 Apstrādājam NFT failus lietotājam ${user.address}...`);
+    console.log(`🚀 Processing NFT files for user ${user.address}...`);
 
     const imageArrayBuffer = await imageFile.arrayBuffer();
     const imageBuffer = Buffer.from(imageArrayBuffer);
@@ -96,84 +96,113 @@ export async function onRequestPost(context) {
       console.log('🔐 Video Hash:', videoHash);
     }
 
-    let imageCid = null;
-    let videoCid = null;
-    let lighthouseError = null;
+    let imageId = null;
+    let videoId = null;
+    let arweaveError = null;
 
-    if (env.LIGHTHOUSE_API_KEY) {
+    // Mēģina augšupielādēt Arweave tikai ja ir atslēga
+    if (env.ARWEAVE_STORAGE_KEY) {
       try {
-        console.log('📤 Mēģinam augšupielādēt attēlu caur Lighthouse SDK...');
-        
-        const uploadResponse = await lighthouse.uploadBuffer(
-          imageBuffer,
-          env.LIGHTHOUSE_API_KEY,
-          false,
-          null,
-          { storageType: "annual" }
-        );
-
-        imageCid = uploadResponse?.data?.Hash || uploadResponse?.Hash;
-        if (imageCid) {
-          console.log('✅ Attēls augšupielādēts Lighthouse:', imageCid);
-        } else {
-          console.warn('⚠️ Lighthouse SDK neatgrieza CID attēlam');
-          lighthouseError = 'No CID returned';
-        }
-      } catch (error) {
-        console.warn('⚠️ Lighthouse attēla augšupielādes kļūda:', error.message);
-        lighthouseError = error.message;
-      }
-
-      if (videoBuffer) {
-        try {
-          console.log('📤 Mēģinam augšupielādēt video caur Lighthouse SDK...');
-          
-          const uploadResponse = await lighthouse.uploadBuffer(
-            videoBuffer,
-            env.LIGHTHOUSE_API_KEY,
-            false,
-            null,
-            { storageType: "annual" }
-          );
-
-          videoCid = uploadResponse?.data?.Hash || uploadResponse?.Hash;
-          if (videoCid) {
-            console.log('✅ Video augšupielādēts Lighthouse:', videoCid);
-          } else {
-            console.warn('⚠️ Lighthouse SDK neatgrieza CID video');
+        const signer = new EthereumSigner(env.ARWEAVE_STORAGE_KEY);
+        const turbo = TurboFactory.authenticated({
+          signer,
+          token: 'base-eth',
+          gatewayUrl: 'https://sepolia.base.org',
+          paymentServiceConfig: {
+            url: 'https://payment.ardrive.dev',
+          },
+          uploadServiceConfig: {
+            url: 'https://upload.ardrive.dev',
           }
-        } catch (error) {
-          console.warn('⚠️ Lighthouse video augšupielādes kļūda:', error.message);
+        });
+
+        // Upload image
+        try {
+          console.log('📤 Uploading image to Arweave via Turbo...');
+          const imageResult = await turbo.upload({
+            data: imageBuffer,
+            dataItemOpts: {
+              tags: [
+                { name: "Content-Type", value: imageType },
+                { name: "App-Name", value: "WalletVisualizer-v2.0" },
+                { name: "User-Address", value: user.address.toLowerCase() },
+                { name: "File-Hash", value: imageHash },
+                { name: "NFT-Asset-Type", value: "image" }
+              ],
+            }
+          });
+
+          imageId = imageResult?.id;
+          if (imageId) {
+            console.log('✅ Image uploaded to Arweave:', imageId);
+          } else {
+            console.warn('⚠️ Turbo SDK did not return TX ID for image');
+            arweaveError = 'No TX ID returned for image';
+          }
+        } catch (imageError) {
+          console.warn('⚠️ Arweave image upload error:', imageError.message);
+          arweaveError = imageError.message;
         }
+
+        // Upload video (if exists)
+        if (videoBuffer) {
+          try {
+            console.log('📤 Uploading video to Arweave via Turbo...');
+            const videoResult = await turbo.upload({
+              data: videoBuffer,
+              dataItemOpts: {
+                tags: [
+                  { name: "Content-Type", value: videoType },
+                  { name: "App-Name", value: "WalletVisualizer-v2.0" },
+                  { name: "User-Address", value: user.address.toLowerCase() },
+                  { name: "File-Hash", value: videoHash },
+                  { name: "NFT-Asset-Type", value: "video" }
+                ],
+              }
+            });
+
+            videoId = videoResult?.id;
+            if (videoId) {
+              console.log('✅ Video uploaded to Arweave:', videoId);
+            } else {
+              console.warn('⚠️ Turbo SDK did not return TX ID for video');
+            }
+          } catch (videoError) {
+            console.warn('⚠️ Arweave video upload error:', videoError.message);
+          }
+        }
+      } catch (initError) {
+        console.warn('⚠️ Turbo initialization error:', initError.message);
+        arweaveError = initError.message;
       }
     } else {
-      lighthouseError = 'No API key configured';
-      console.warn('⚠️ LIGHTHOUSE_API_KEY nav konfigurēts');
+      arweaveError = 'No ARWEAVE_STORAGE_KEY configured';
+      console.warn('⚠️ ARWEAVE_STORAGE_KEY not configured - files saved locally only');
     }
 
     const responseData = {
       success: true,
       image: {
         hash: imageHash,
-        cid: imageCid || null,
+        id: imageId || null,
         fileName: imageName,
         mimeType: imageType,
         size: imageSize
       },
       video: videoBuffer ? {
         hash: videoHash,
-        cid: videoCid || null,
+        id: videoId || null,
         fileName: videoName,
         mimeType: videoType,
         size: videoSize
       } : null,
-      lighthouse: {
-        success: !!(imageCid || videoCid),
-        error: lighthouseError
+      arweave: {
+        success: !!(imageId || videoId),
+        error: arweaveError
       }
     };
 
-    console.log(`✅ NFT sagatavošana pabeigta! Image hash: ${imageHash}`);
+    console.log(`✅ NFT preparation complete! Image hash: ${imageHash}`);
 
     return new Response(JSON.stringify(responseData), {
       status: 200,
@@ -181,7 +210,7 @@ export async function onRequestPost(context) {
     });
 
   } catch (error) {
-    console.error('💥 prepare-nft kļūda:', error);
+    console.error('💥 prepare-nft error:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { "Content-Type": "application/json" }
