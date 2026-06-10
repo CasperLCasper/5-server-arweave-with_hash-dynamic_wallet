@@ -1,24 +1,30 @@
 // ============================================ //
-// IPFS FUNCTIONS (server-side upload via Lighthouse SDK)
+// ARWEAVE/TURBO STORAGE FUNCTIONS
 // ============================================ //
 
 import { showToast, showProgress, setProgress, hideProgress } from './ui.js';
-import { LIGHTHOUSE_GATEWAY } from './config.js';
+import { ARWEAVE_GATEWAY } from './config.js';
 import { UI } from './state.js';
 
-export function showIPFSPreview(imageURL, videoURL, metadataURL) {
+/**
+ * Parāda augšupielādēto failu priekšskatījumu ar Arweave linkiem
+ */
+export function showArweavePreview(imageId, videoId, metadataId) {
   if (UI.previewImage) {
     UI.previewImage.innerHTML = '';
     UI.previewVideo.innerHTML = '';
     UI.previewMetadata.innerHTML = '';
-    if (imageURL) UI.previewImage.innerHTML = `🖼️ Image: <a href="${LIGHTHOUSE_GATEWAY}${imageURL.cid}" target="_blank">${imageURL.cid.substring(0, 20)}...</a>`;
-    if (videoURL) UI.previewVideo.innerHTML = `🎬 Video: <a href="${LIGHTHOUSE_GATEWAY}${videoURL.cid}" target="_blank">${videoURL.cid.substring(0, 20)}...</a>`;
-    if (metadataURL) UI.previewMetadata.innerHTML = `📄 Metadata: <a href="${LIGHTHOUSE_GATEWAY}${metadataURL.cid}" target="_blank">${metadataURL.cid.substring(0, 20)}...</a>`;
+    if (imageId) UI.previewImage.innerHTML = `🖼️ Image: <a href="${ARWEAVE_GATEWAY}${imageId}" target="_blank">${imageId.substring(0, 20)}...</a>`;
+    if (videoId) UI.previewVideo.innerHTML = `🎬 Video: <a href="${ARWEAVE_GATEWAY}${videoId}" target="_blank">${videoId.substring(0, 20)}...</a>`;
+    if (metadataId) UI.previewMetadata.innerHTML = `📄 Metadata: <a href="${ARWEAVE_GATEWAY}${metadataId}" target="_blank">${metadataId.substring(0, 20)}...</a>`;
     if (UI.ipfsPreview) UI.ipfsPreview.style.display = 'block';
     setTimeout(() => { if (UI.ipfsPreview) UI.ipfsPreview.style.display = 'none'; }, 10000);
   }
 }
 
+/**
+ * Lejupielādē vienu failu lokāli
+ */
 export function downloadFile(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -31,6 +37,9 @@ export function downloadFile(blob, filename) {
   console.log(`💾 Lejupielādēts: ${filename}`);
 }
 
+/**
+ * Lejupielādē visus failus kā ZIP arhīvu
+ */
 export async function downloadAllFiles(files) {
   // JSZip ir globāli pieejams no CDN (ielādēts index.html)
   const zip = new JSZip();
@@ -55,6 +64,9 @@ export async function downloadAllFiles(files) {
   console.log(`💾 ZIP arhīvs saglabāts ar ${files.length} failiem`);
 }
 
+/**
+ * Aprēķina SHA-256 hash no Blob datiem (klienta pusē)
+ */
 export async function calculateHashFromBlob(blob) {
   const buffer = await blob.arrayBuffer();
   const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
@@ -63,8 +75,11 @@ export async function calculateHashFromBlob(blob) {
   return hashHex;
 }
 
-export async function uploadFileToIPFS(file) {
-  showToast('Uploading file to Lighthouse...', 'info');
+/**
+ * Augšupielādē failu caur serveri uz Arweave/Turbo
+ */
+export async function uploadFileToArweave(file) {
+  showToast('Uploading file to Arweave (Turbo)...', 'info');
   
   const formData = new FormData();
   formData.append('file', file);
@@ -75,7 +90,7 @@ export async function uploadFileToIPFS(file) {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  const res = await fetch('/api/uploadFileToIPFS', {
+  const res = await fetch('/api/uploadFileToArweave', {
     method: 'POST',
     headers,
     body: formData
@@ -87,43 +102,52 @@ export async function uploadFileToIPFS(file) {
   }
   
   const result = await res.json();
-  if (!result.cid) throw new Error("Upload failed - no CID returned");
+  if (!result.id) throw new Error("Upload failed - no transaction ID returned");
   
-  console.log("File uploaded to Lighthouse:", result.cid, "Hash:", result.hash);
+  console.log("File uploaded to Arweave:", result.id, "Hash:", result.hash);
   return result;
 }
 
-export async function uploadMetadataToIPFS(metadata) {
-  showToast('Preparing metadata for Lighthouse...', 'info');
+/**
+ * Augšupielādē metadatus caur serveri uz Arweave/Turbo
+ */
+export async function uploadMetadataToArweave(metadata) {
+  showToast('Preparing metadata for Arweave...', 'info');
   
   const { apiFetch } = await import('./api.js');
-  const response = await apiFetch('/api/uploadMetadataToIPFS', {
+  const response = await apiFetch('/api/uploadMetadataToArweave', {
     method: 'POST',
     body: JSON.stringify(metadata)
   });
   
   if (!response.ok) throw new Error(`Metadata upload failed: ${response.status}`);
   
-  showToast('Metadata uploaded to Lighthouse!', 'success');
+  showToast('Metadata uploaded to Arweave!', 'success');
   return await response.json();
 }
 
-export async function uploadImageToIPFS(canvas) {
-  showToast('Preparing image for Lighthouse...', 'info');
+/**
+ * Augšupielādē attēlu no canvas uz Arweave
+ */
+export async function uploadImageToArweave(canvas) {
+  showToast('Preparing image for Arweave...', 'info');
   return new Promise((resolve, reject) => {
     canvas.toBlob(async (blob) => {
       if (!blob) { reject(new Error('Failed to create image')); return; }
       const file = new File([blob], `snapshot_${Date.now()}.png`, { type: 'image/png' });
       try { 
-        showToast('Uploading image to Lighthouse...', 'info'); 
-        resolve(await uploadFileToIPFS(file)); 
+        showToast('Uploading image to Arweave...', 'info'); 
+        resolve(await uploadFileToArweave(file)); 
       } catch (error) { reject(error); }
     }, 'image/png');
   });
 }
 
-export async function uploadVideoToIPFS(stream, duration = 15000) {
-  showToast('Recording video for Lighthouse...', 'info');
+/**
+ * Ieraksta video un augšupielādē uz Arweave
+ */
+export async function uploadVideoToArweave(stream, duration = 15000) {
+  showToast('Recording video for Arweave...', 'info');
   let mimeType = 'video/webm';
   if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
   const recorder = new MediaRecorder(stream, { mimeType });
@@ -135,8 +159,8 @@ export async function uploadVideoToIPFS(stream, duration = 15000) {
       const blob = new Blob(chunks, { type: mimeType });
       const file = new File([blob], `video_${Date.now()}.${ext}`, { type: mimeType });
       try { 
-        showToast('Uploading video to Lighthouse...', 'info'); 
-        resolve(await uploadFileToIPFS(file)); 
+        showToast('Uploading video to Arweave...', 'info'); 
+        resolve(await uploadFileToArweave(file)); 
       } catch (error) { reject(error); }
     };
     recorder.onerror = (event) => {
