@@ -1,6 +1,6 @@
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
-import lighthouse from '@lighthouse-web3/sdk';
+import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 import crypto from 'crypto';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'video/mp4', 'video/webm'];
@@ -60,44 +60,71 @@ export async function onRequestPost(context) {
       });
     }
 
-    console.log(`🚀 Augšupielādējam failu caur Lighthouse SDK (Annual Storage)...`);
+    console.log(`🚀 Uploading file to Arweave via Turbo SDK (Base Sepolia)...`);
 
     const arrayBuffer = await fileEntry.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 🔐 Aprēķina SHA256 hash no faila baitiem
+    // Aprēķina SHA-256 hash
     const fileHash = '0x' + crypto.createHash('sha256').update(buffer).digest('hex');
 
-    // ✅ Izmantojam Lighthouse SDK ar storageType
-    const uploadResponse = await lighthouse.uploadBuffer(
-      buffer,
-      env.LIGHTHOUSE_API_KEY,
-      false,
-      null,
-      { storageType: "annual" }
-    );
-
-    const cid = uploadResponse?.data?.Hash || uploadResponse?.Hash;
-
-    if (!cid) {
-      console.error("Lighthouse SDK atbilde:", JSON.stringify(uploadResponse));
-      throw new Error("Neizdevās iegūt CID no Lighthouse SDK");
+    // Inicializē Turbo ar Base Sepolia testnet
+    const privateKey = env.ARWEAVE_STORAGE_KEY;
+    if (!privateKey) {
+      throw new Error('ARWEAVE_STORAGE_KEY not configured');
     }
 
-    console.log(`✅ Fails veiksmīgi augšupielādēts! CID: ${cid}, Hash: ${fileHash}`);
+    const signer = new EthereumSigner(privateKey);
+    const turbo = TurboFactory.authenticated({
+      signer,
+      token: 'base-eth',
+      gatewayUrl: 'https://sepolia.base.org',
+      paymentServiceConfig: {
+        url: 'https://payment.ardrive.dev',
+      },
+      uploadServiceConfig: {
+        url: 'https://upload.ardrive.dev',
+      }
+    });
+
+    // Nosaka Content-Type tag
+    const mimeType = contentType || 'application/octet-stream';
+
+    // Augšupielādē caur Turbo
+    const uploadResult = await turbo.upload({
+      data: buffer,
+      dataItemOpts: {
+        tags: [
+          { name: "Content-Type", value: mimeType },
+          { name: "App-Name", value: "WalletVisualizer-v2.0" },
+          { name: "User-Address", value: user.address.toLowerCase() },
+          { name: "File-Hash", value: fileHash }
+        ],
+      }
+    });
+
+    const txId = uploadResult?.id;
+    if (!txId) {
+      console.error("Turbo upload response:", JSON.stringify(uploadResult));
+      throw new Error("Failed to get transaction ID from Turbo");
+    }
+
+    console.log(`✅ File uploaded to Arweave! TX ID: ${txId}, Hash: ${fileHash}`);
 
     return new Response(JSON.stringify({
-      ipfs: `ipfs://${cid}`,
-      http: `https://meaningful-macaw-y3g2r.lighthouseweb3.xyz/ipfs/${cid}`,
-      cid: cid,
-      hash: fileHash
+      success: true,
+      id: txId,
+      hash: fileHash,
+      url: `https://turbo-gateway.com/${txId}`,
+      owner: uploadResult.owner,
+      dataCaches: uploadResult.dataCaches
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" }
     });
 
   } catch (error) {
-    console.error('💥 Lighthouse SDK kļūda:', error);
+    console.error('💥 Turbo upload error:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { "Content-Type": "application/json" }
