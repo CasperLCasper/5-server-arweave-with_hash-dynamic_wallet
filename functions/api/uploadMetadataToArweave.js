@@ -1,7 +1,7 @@
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
 import { setCache } from "../_lib/cache.js";
-import lighthouse from '@lighthouse-web3/sdk';
+import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -58,8 +58,8 @@ export async function onRequestPost(context) {
         headers: { "Content-Type": "application/json" }
       });
     }
-    if (!/^(https?|ipfs):\/\/.+/.test(metadata.image)) {
-      return new Response(JSON.stringify({ error: 'Image must be a valid HTTP/HTTPS or IPFS URL' }), {
+    if (!/^(https?|ar|ipfs):\/\/.+/.test(metadata.image)) {
+      return new Response(JSON.stringify({ error: 'Image must be a valid HTTP/HTTPS, Arweave, or IPFS URL' }), {
         status: 400,
         headers: { "Content-Type": "application/json" }
       });
@@ -72,42 +72,62 @@ export async function onRequestPost(context) {
       }
     }
 
-    console.log(`🚀 Augšupielādējam metadatus caur Lighthouse SDK (Annual Storage)...`);
+    console.log(`🚀 Uploading metadata to Arweave via Turbo SDK...`);
 
-    const jsonString = JSON.stringify(metadata);
-    const buffer = Buffer.from(jsonString, 'utf-8');
-
-    // ✅ Izmantojam Lighthouse SDK ar storageType
-    const uploadResponse = await lighthouse.uploadBuffer(
-      buffer,
-      env.LIGHTHOUSE_API_KEY,
-      false,
-      null,
-      { storageType: "annual" }
-    );
-
-    const cid = uploadResponse?.data?.Hash || uploadResponse?.Hash;
-
-    if (!cid) {
-      console.error('❌ Lighthouse SDK neatgrieza CID metadatiem. Atbilde:', JSON.stringify(uploadResponse));
-      throw new Error('No CID returned for metadata from Lighthouse SDK');
+    const privateKey = env.ARWEAVE_STORAGE_KEY;
+    if (!privateKey) {
+      throw new Error('ARWEAVE_STORAGE_KEY not configured');
     }
 
-    console.log(`✅ Metadati veiksmīgi augšupielādēti! CID: ${cid}`);
+    const signer = new EthereumSigner(privateKey);
+    const turbo = TurboFactory.authenticated({
+      signer,
+      token: 'base-eth',
+      gatewayUrl: 'https://sepolia.base.org',
+      paymentServiceConfig: {
+        url: 'https://payment.ardrive.dev',
+      },
+      uploadServiceConfig: {
+        url: 'https://upload.ardrive.dev',
+      }
+    });
 
-    await setCache(`lastUploadCID:${user.address.toLowerCase()}`, cid, env, 5 * 60 * 1000);
+    const jsonString = JSON.stringify(metadata);
+
+    const uploadResult = await turbo.upload({
+      data: jsonString,
+      dataItemOpts: {
+        tags: [
+          { name: "Content-Type", value: "application/json" },
+          { name: "App-Name", value: "WalletVisualizer-v2.0" },
+          { name: "User-Address", value: user.address.toLowerCase() },
+          { name: "Metadata-Type", value: "NFT-Metadata" }
+        ],
+      }
+    });
+
+    const txId = uploadResult?.id;
+
+    if (!txId) {
+      console.error('❌ Turbo SDK did not return transaction ID for metadata. Response:', JSON.stringify(uploadResult));
+      throw new Error('No transaction ID returned for metadata from Turbo SDK');
+    }
+
+    console.log(`✅ Metadata successfully uploaded! TX ID: ${txId}`);
+
+    await setCache(`lastUploadId:${user.address.toLowerCase()}`, txId, env, 5 * 60 * 1000);
 
     return new Response(JSON.stringify({
-      ipfs: `ipfs://${cid}`,
-      http: `https://meaningful-macaw-y3g2r.lighthouseweb3.xyz/ipfs/${cid}`,
-      cid: cid
+      success: true,
+      id: txId,
+      url: `https://turbo-gateway.com/${txId}`
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" }
     });
 
   } catch (error) {
-    console.error('💥 Metadatu augšupielādes kļūda:', error);
+    console.error('💥 Metadata upload error:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { "Content-Type": "application/json" }
