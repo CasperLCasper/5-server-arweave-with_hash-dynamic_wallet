@@ -1,29 +1,29 @@
 // ============================================ //
 // MAIN APP - MULTICHAIN WALLET VISUALIZER
+// Arweave/Turbo Storage + Base Sepolia Minting
 // ============================================ //
 
 import { AppState, initUI, UI } from './modules/state.js';
 import { VIZ_CHAINS, MINT_CHAIN } from './modules/chains.js';
-import { LIGHTHOUSE_GATEWAY, CONTRACT_ABI, LOW_POWER_MODE, getMintProvider } from './modules/config.js'; 
+import { ARWEAVE_GATEWAY, CONTRACT_ABI, LOW_POWER_MODE, getMintProvider } from './modules/config.js'; 
 import { showToast, setButtonLoading, updateTokenListUI, hideProgress, showProgress } from './modules/ui.js';
 import { login, getNFTPrice, getContractAddress } from './modules/api.js'; 
 import { connectWallet, updateChainStatus, switchToMintChain, switchToVizChain } from './modules/web3.js';
 import { 
-  uploadImageToIPFS, uploadVideoToIPFS, uploadMetadataToIPFS, 
-  showIPFSPreview, downloadFile, downloadAllFiles, calculateHashFromBlob 
-} from './modules/ipfs.js';
+  uploadImageToArweave, uploadVideoToArweave, uploadMetadataToArweave, 
+  showArweavePreview, downloadFile, downloadAllFiles, calculateHashFromBlob 
+} from './modules/storage.js';
 import { startRecording, cleanupRecording } from './modules/recording.js';
 import { getCanvasDimensions, resizeCanvas, cleanup, drawFrame, animate, stopAnimation, renderSnapshot, updateNFTCenters, initParticlesOnce, cloneParticles, hashStringToInt, seededRandomFloat, createParticleCache } from './modules/visualizer.js';
 import { apiFetch } from './modules/api.js';
 
 import { ADDON_STYLES } from './themes.js';
 
-// ✅ INTEGRĀCIJA: Importējam apkopes iestatījumus no atsevišķā faila
 import { MAINTENANCE_CONFIG } from './maintenance.js';
 
 const App = Object.assign({}, AppState, {
   setAddonStyle(styleName) {
-    if (MAINTENANCE_CONFIG.isMaintenance) return; // Drošība
+    if (MAINTENANCE_CONFIG.isMaintenance) return;
     this.currentAddonStyle = styleName;
     
     const style = ADDON_STYLES[styleName];
@@ -197,7 +197,7 @@ const App = Object.assign({}, AppState, {
         showToast('🎬 Video failed, continuing without video', 'warning');
       }
       
-      showToast('📤 Processing on server...', 'info');
+      showToast('📤 Uploading to Arweave (Turbo)...', 'info');
       
       const nftFormData = new FormData();
       nftFormData.append('image', imageFile);
@@ -220,10 +220,10 @@ const App = Object.assign({}, AppState, {
       const serverData = await serverRes.json();
       if (!serverData.success) throw new Error(serverData.error || 'Processing failed');
       
-      console.log('✅ Serveris apstrādāja:', serverData);
+      console.log('✅ Server processed:', serverData);
       
-      const gw = LIGHTHOUSE_GATEWAY;
-      const imageUrl = serverData.image.cid ? `${gw}${serverData.image.cid}` : `local://${serverData.image.hash}`;
+      const gw = ARWEAVE_GATEWAY;
+      const imageUrl = serverData.image.id ? `${gw}${serverData.image.id}` : `local://${serverData.image.hash}`;
       
       const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
       const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
@@ -231,7 +231,7 @@ const App = Object.assign({}, AppState, {
       
       const metadata = {
         name: "Wallet Visualization NFT",
-        description: `Generated from wallet ${this.account} on ${new Date().toISOString()}`,
+        description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
         image: imageUrl,
         attributes: [
           { trait_type: "Balance Amount", value: this.ethBalance.toString() },
@@ -240,11 +240,12 @@ const App = Object.assign({}, AppState, {
           { trait_type: "Transaction Count", value: this.txCount.toString() },
           { trait_type: "Visual Style", value: ADDON_STYLES[this.currentAddonStyle]?.name || this.currentAddonStyle },
           { trait_type: "Source Chain", value: this.currentVizChain },
+          { trait_type: "Storage", value: "Arweave (Permanent)" },
           { trait_type: "Generated At", value: new Date().toISOString() }
         ]
       };
       
-      if (serverData.video?.cid) metadata.animation_url = `${gw}${serverData.video.cid}`;
+      if (serverData.video?.id) metadata.animation_url = `${gw}${serverData.video.id}`;
       
       const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
       const metadataFileName = `metadata_${Date.now()}.json`;
@@ -262,11 +263,11 @@ const App = Object.assign({}, AppState, {
       
       showToast('✅ All files saved as ZIP!', 'success');
       
-      let metadataCID = null;
+      let metadataId = null;
       try {
-        const metaRes = await uploadMetadataToIPFS(metadata);
-        metadataCID = metaRes.cid || metaRes.ipfs;
-        showToast('✅ Metadata uploaded to Lighthouse!', 'success');
+        const metaRes = await uploadMetadataToArweave(metadata);
+        metadataId = metaRes.id || metaRes.cid;
+        showToast('✅ Metadata uploaded to Arweave!', 'success');
       } catch (e) {
         console.warn('Metadata upload failed:', e);
         showToast('⚠️ Metadata upload failed, continuing anyway', 'warning');
@@ -280,7 +281,11 @@ const App = Object.assign({}, AppState, {
           method: 'POST',
           body: JSON.stringify({
             wallet: this.account,
-            metadataUri: metadataCID || serverData.image.cid || `local://${serverData.image.hash}`,
+            metadataUri: metadataId 
+              ? `https://turbo-gateway.com/${metadataId}`
+              : serverData.image.id 
+                ? `https://turbo-gateway.com/${serverData.image.id}`
+                : `local://${serverData.image.hash}`,
             imageHash: serverData.image.hash,
             videoHash: serverData.video?.hash || null
           })
@@ -306,14 +311,16 @@ const App = Object.assign({}, AppState, {
       await tx.wait();
       showToast('✅ NFT minted!', 'success');
       
-      const ls = serverData.lighthouse.success ? '✅' : '⚠️';
+      const arweaveStatus = serverData.arweave.success ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
         `Price: ${ethers.formatEther(mintData.transaction.value)} ETH\n\n` +
         `🔐 Image Hash: ${serverData.image.hash}\n` +
         `${serverData.video ? '🔐 Video Hash: ' + serverData.video.hash + '\n' : ''}` +
-        `${metadataCID ? '📄 CID: ' + metadataCID + '\n' : ''}` +
-        `\n${ls} Lighthouse: ${serverData.lighthouse.success ? 'OK' : 'Failed (files saved locally)'}` +
+        `${metadataId ? '📄 Arweave ID: ' + metadataId + '\n' : ''}` +
+        `${serverData.image.id ? '🖼️ Image ID: ' + serverData.image.id + '\n' : ''}` +
+        `${serverData.video?.id ? '🎬 Video ID: ' + serverData.video.id + '\n' : ''}` +
+        `\n${arweaveStatus} Arweave: ${serverData.arweave.success ? 'OK' : 'Failed (files saved locally)'}` +
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
     } catch (error) {
@@ -359,7 +366,6 @@ const App = Object.assign({}, AppState, {
     }
   },
 
-  // ✅ PALĪGFUNKCIJA: Canvas un interfeisa nobloķēšana vizuāli
   renderMaintenanceScreen() {
     stopAnimation(this);
     if (this.ctx || UI.canvas) {
@@ -388,11 +394,10 @@ const App = Object.assign({}, AppState, {
   },
 
   init() {
-    console.log("🚀 Starting Wallet Visualizer with Lighthouse Storage + ZIP Download...");
+    console.log("🚀 Starting Wallet Visualizer with Arweave/Turbo Permanent Storage...");
     initUI();
     resizeCanvas(this);
     
-    // ✅ LABOJUMS: Ja apkopes režīms ir ieslēgts, uzreiz aizslēdzam UI un pārtraucam parasto init procesu
     if (MAINTENANCE_CONFIG.isMaintenance) {
       console.warn("⚠️ Application initialization stopped: Maintenance Mode is active.");
       this.renderMaintenanceScreen();
@@ -486,7 +491,7 @@ const App = Object.assign({}, AppState, {
     window.LOW_POWER_MODE = LOW_POWER_MODE;
     
     showToast('✨ Welcome! Connect your wallet to begin.', 'info');
-    console.log('✅ Wallet Visualizer Ready with Local + Lighthouse Storage!');
+    console.log('✅ Wallet Visualizer Ready with Arweave/Turbo Permanent Storage!');
   }
 });
 
