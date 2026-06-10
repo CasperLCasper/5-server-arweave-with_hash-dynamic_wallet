@@ -62,11 +62,16 @@ export async function onRequestPost(context) {
 
     let fullMetadataUri = metadataUri.trim();
     
+    // Handle Arweave transaction IDs
     if (fullMetadataUri.startsWith('Qm') || fullMetadataUri.startsWith('baf')) {
-      fullMetadataUri = `https://meaningful-macaw-y3g2r.lighthouseweb3.xyz/ipfs/${fullMetadataUri}`;
+      // IPFS CID - wrap with Arweave gateway if needed
+      fullMetadataUri = `https://turbo-gateway.com/${fullMetadataUri}`;
     } else if (fullMetadataUri.startsWith('ipfs://')) {
       const cid = fullMetadataUri.substring(7);
-      fullMetadataUri = `https://meaningful-macaw-y3g2r.lighthouseweb3.xyz/ipfs/${cid}`;
+      fullMetadataUri = `https://turbo-gateway.com/${cid}`;
+    } else if (fullMetadataUri.startsWith('ar://')) {
+      const txId = fullMetadataUri.substring(5);
+      fullMetadataUri = `https://turbo-gateway.com/${txId}`;
     }
 
     const CONTRACT_ADDRESS = env.CONTRACT_ADDRESS;
