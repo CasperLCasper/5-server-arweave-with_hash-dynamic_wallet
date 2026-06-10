@@ -1,10 +1,11 @@
 // ============================================ //
-// CONFIGURATION
+// CONFIGURATION - Arweave/Turbo Storage
 // ============================================ //
 
 import { getRpcUrl } from './chains.js';
 
-export const LIGHTHOUSE_GATEWAY = "https://meaningful-macaw-y3g2r.lighthouseweb3.xyz/ipfs/";
+// Arweave Turbo gateway for data retrieval
+export const ARWEAVE_GATEWAY = "https://turbo-gateway.com/";
 
 export const CONTRACT_ABI = [
   "function mintPrice() view returns (uint256)"
