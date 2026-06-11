@@ -126,7 +126,7 @@ const App = Object.assign({}, AppState, {
     setButtonLoading(UI.generateNFTBtn, true);
     
     try {
-      // ✅ 1. VISPI RMS IERAKSTA VIDEO UN UZŅEM ATTĒLU, KAMĒR ANIMĀCIJA VĒL AKTĪVA
+      // 1. VISPI RMS IERAKSTA VIDEO UN UZŅEM ATTĒLU, KAMĒR ANIMĀCIJA VĒL AKTĪVA
       showToast('📸 Creating your NFT assets...', 'info');
       
       const imageBlob = await new Promise((resolve, reject) => {
@@ -168,7 +168,7 @@ const App = Object.assign({}, AppState, {
         showToast('🎬 Video failed, continuing without video', 'warning');
       }
       
-      // ✅ 2. TAGAD PĀRSLĒDZ TĪKLU UN TURPINI AR MINTĒŠANU
+      // 2. TAGAD PĀRSLĒDZ TĪKLU UN TURPINI AR MINTĒŠANU
       showToast('🔄 Switching to Base Sepolia network for minting...', 'info');
       await switchToMintChain();
       
@@ -336,7 +336,7 @@ const App = Object.assign({}, AppState, {
         `\n${arweaveStatus} Arweave: ${serverData.arweave.success ? 'OK' : 'Failed (files saved locally)'}` +
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
-      // ✅ PĒC MINTĒŠANAS — RESTARTĒ VIZUALIZĀCIJU
+      // 3. PĒC MINTĒŠANAS — RESTARTĒ VIZUALIZĀCIJU
       showToast('🔄 Restoring visualization...', 'info');
       await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -371,6 +371,15 @@ const App = Object.assign({}, AppState, {
   async renderSnapshot(chain) {
     if (MAINTENANCE_CONFIG.isMaintenance) return;
     await renderSnapshot(this, chain);
+    
+    // Aktivizē pogas pēc veiksmīgas ielādes
+    if (UI.recordBtn) UI.recordBtn.disabled = false;
+    if (UI.renderBtn) UI.renderBtn.disabled = false;
+    if (UI.generateNFTBtn) {
+      UI.generateNFTBtn.disabled = false;
+      const price = await getNFTPrice();
+      UI.generateNFTBtn.setAttribute('data-price', price);
+    }
   },
 
   cleanupUI() {
