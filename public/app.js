@@ -127,7 +127,6 @@ const App = Object.assign({}, AppState, {
     
     // ==========================================
     // 1. SOLIS: UZŅEM ATTĒLU UN VIDEO LOKĀLI
-    // (animācija vēl aktīva)
     // ==========================================
     try {
       showToast('📸 Creating your NFT assets...', 'info');
@@ -142,8 +141,6 @@ const App = Object.assign({}, AppState, {
       
       const imageFileName = `snapshot_${Date.now()}.png`;
       const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
-      
-      // Aprēķina attēla hash
       const imageHash = await calculateHashFromBlob(imageBlob);
       
       // Uzņem video (15 sekundes)
@@ -179,11 +176,12 @@ const App = Object.assign({}, AppState, {
       }
       
       // ==========================================
-      // 2. SOLIS: AUGŠUPIELĀDĒ ARWEAVE CAUR prepare-nft
-      // (ja neizdodas — process apstājas)
+      // 2. SOLIS: AUGŠUPIELĀDĒ VISU ARWEAVE
+      // (attēls + video + JSON metadata — pirms mint)
       // ==========================================
       showToast('📤 Uploading to Arweave (Turbo)...', 'info');
       
+      // Vispirms upload attēlu un video caur prepare-nft
       const nftFormData = new FormData();
       nftFormData.append('image', imageFile);
       if (videoFile) nftFormData.append('video', videoFile);
@@ -208,11 +206,45 @@ const App = Object.assign({}, AppState, {
       console.log('✅ Server processed:', serverData);
       
       const gw = ARWEAVE_GATEWAY;
-      const imageUrl = serverData.image.id ? `${gw}${serverData.image.id}` : `local://${serverData.image.hash}`;
+      const imageUrl = serverData.image.id ? `${gw}${serverData.image.id}` : `local://${imageHash}`;
       const arweaveSuccess = serverData.arweave?.success || false;
       
+      const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
+      const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
+      const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
+      
+      // Izveido metadata un augšupielādē JSON pirms mint
+      const metadata = {
+        name: "Wallet Visualization NFT",
+        description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
+        image: imageUrl,
+        attributes: [
+          { trait_type: "Balance Amount", value: this.ethBalance.toString() },
+          { trait_type: "Native Token", value: nativeTokenSymbol },
+          { trait_type: "Token Count", value: this.tokens.length.toString() },
+          { trait_type: "Transaction Count", value: this.txCount.toString() },
+          { trait_type: "Visual Style", value: ADDON_STYLES[this.currentAddonStyle]?.name || this.currentAddonStyle },
+          { trait_type: "Source Chain", value: this.currentVizChain },
+          { trait_type: "Storage", value: "Arweave (Permanent)" },
+          { trait_type: "Generated At", value: new Date().toISOString() }
+        ]
+      };
+      
+      if (serverData.video?.id) metadata.animation_url = `${gw}${serverData.video.id}`;
+      
+      // Augšupielādē JSON metadata pirms mint
+      let metaId = null;
+      try {
+        const metaRes = await uploadMetadataToArweave(metadata);
+        metaId = metaRes.id || metaRes.cid;
+        showToast('✅ Metadata uploaded to Arweave!', 'success');
+      } catch (metaError) {
+        console.warn('Metadata upload failed:', metaError);
+        showToast('⚠️ Metadata upload failed, continuing anyway', 'warning');
+      }
+      
       // ==========================================
-      // 3. SOLIS: PĀRSLĒDZAS UZ BASE SEPOLIA UN MINTĒ
+      // 3. SOLIS: PĀRSLĒDZAS UZ BASE SEPOLIA
       // ==========================================
       showToast('🔄 Switching to Base Sepolia network for minting...', 'info');
       await switchToMintChain();
@@ -251,18 +283,15 @@ const App = Object.assign({}, AppState, {
       }
       
       // ==========================================
-      // 4. SOLIS: IEGŪST MINTĒŠANAS DATUS NO SERVERA
+      // 4. SOLIS: IEGŪST MINTĒŠANAS DATUS
       // ==========================================
       showToast('📝 Preparing mint...', 'info');
       
-      const metadataId = serverData.image.id || null;
-      const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
-      const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
-      const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
-      
-      const metadataUri = metadataId 
-        ? `${ARWEAVE_GATEWAY}${metadataId}`
-        : `local://${imageHash}`;
+      const metadataUri = metaId 
+        ? `${ARWEAVE_GATEWAY}${metaId}`
+        : serverData.image.id 
+          ? `${ARWEAVE_GATEWAY}${serverData.image.id}`
+          : `local://${imageHash}`;
       
       let mintData;
       try {
@@ -309,26 +338,8 @@ const App = Object.assign({}, AppState, {
       showToast('✅ NFT minted!', 'success');
       
       // ==========================================
-      // 6. SOLIS: IZVEIDO METADATA UN SAGLABĀ ZIP
+      // 6. SOLIS: SAGLABĀ ZIP AR VISIEM FAILIEM
       // ==========================================
-      const metadata = {
-        name: "Wallet Visualization NFT",
-        description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
-        image: imageUrl,
-        attributes: [
-          { trait_type: "Balance Amount", value: this.ethBalance.toString() },
-          { trait_type: "Native Token", value: nativeTokenSymbol },
-          { trait_type: "Token Count", value: this.tokens.length.toString() },
-          { trait_type: "Transaction Count", value: this.txCount.toString() },
-          { trait_type: "Visual Style", value: ADDON_STYLES[this.currentAddonStyle]?.name || this.currentAddonStyle },
-          { trait_type: "Source Chain", value: this.currentVizChain },
-          { trait_type: "Storage", value: "Arweave (Permanent)" },
-          { trait_type: "Generated At", value: new Date().toISOString() }
-        ]
-      };
-      
-      if (serverData.video?.id) metadata.animation_url = `${gw}${serverData.video.id}`;
-      
       const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
       const metadataFileName = `metadata_${Date.now()}.json`;
       
@@ -343,16 +354,6 @@ const App = Object.assign({}, AppState, {
       }
       await downloadAllFiles(completeFiles);
       showToast('✅ All files saved as ZIP!', 'success');
-      
-      // Mēģina augšupielādēt metadata
-      let metaId = null;
-      try {
-        const metaRes = await uploadMetadataToArweave(metadata);
-        metaId = metaRes.id || metaRes.cid;
-        showToast('✅ Metadata uploaded to Arweave!', 'success');
-      } catch (metaError) {
-        console.warn('Metadata upload failed:', metaError);
-      }
       
       // ==========================================
       // 7. SOLIS: PARĀDA REZULTĀTU
