@@ -6,7 +6,6 @@ import { UI } from './state.js';
 import { showToast, showProgress, setProgress, hideProgress, setButtonLoading, updateTokenListUI } from './ui.js';
 import { MAX_PARTICLES, CONNECTION_DISTANCE, VIZ_LOW_POWER_MODE } from './config.js';
 import { getTokens, getAllNFTs } from './api.js';
-// ✅ LABOJUMS: Importējam tīklu konfigurāciju, lai dinamiski noteiktu valūtas simbolu
 import { VIZ_CHAINS } from './chains.js';
 
 export function getCanvasDimensions() {
@@ -48,7 +47,6 @@ export function cleanup(app) {
 export function hashStringToInt(str, mod = 1000) { 
   let h = 2166136261 >>> 0; 
   for (let i = 0; i < str.length; i++) {
-    // Izmantojam codePointAt, lai pareizi apstrādātu pilnus Unicode simbolus
     h ^= str.codePointAt(i);
     h = Math.imul(h, 16777619) >>> 0;
   } 
@@ -218,23 +216,19 @@ export function drawFrame(app, frame, showTokensFrame) {
     addon.drawExtraEffects(ctx, W, H, frame, app.particles, cx0, cy0);
   }
   
-  // ✅ LABOJUMS: Novēršam veco datu un jauno valūtu sajaukšanos uz ekrāna ielādes laikā
   if (showTokensFrame && app.showInfo) {
     const currentChainConfig = VIZ_CHAINS[app.currentVizChain];
     const isAmoy = app.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
     const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
 
-    // Pārbaudām, vai renderēšanas poga šobrīd ir atspējota (notiek asinhrona ielāde)
     const isLoadingData = UI.renderBtn && UI.renderBtn.disabled;
 
     ctx.fillStyle = '#0ff';
     ctx.font = '20px Inter';
     
     if (isLoadingData) {
-      // Kamēr lādējas, rādām neitrālu statusu ar pareizo izvēlētā tīkla simbolu
       ctx.fillText(`${nativeTokenSymbol}: Loading data...`, 15, 70);
     } else {
-      // Kad dati pilnībā ielādēti, smuki izvadām jauno bilanci
       ctx.fillText(`${nativeTokenSymbol}: ${app.ethBalance.toFixed(4)}`, 15, 70);
     }
 
@@ -300,11 +294,26 @@ export function cloneParticles(app) {
   return app.initialParticles.map(p => ({ ...p, x: 0, y: 0 })); 
 }
 
+/**
+ * Atjauno vizualizāciju pēc mintēšanas — restartē animāciju un aktivizē pogas
+ */
+export function resumeVisualization(app) {
+  if (!app.account || !app.initialParticles.length) return;
+  
+  app.particles = cloneParticles(app);
+  
+  if (UI.recordBtn) UI.recordBtn.disabled = false;
+  if (UI.renderBtn) UI.renderBtn.disabled = false;
+  if (UI.generateNFTBtn) {
+    UI.generateNFTBtn.disabled = false;
+  }
+  
+  animate(app);
+}
+
 export async function renderSnapshot(app, chain) {
   if (!app.account) return;
 
-  // ✅ LABOJUMS: Sinhroni pirms jebkādiem "await" nodzēšam veco stāvokli, 
-  // lai drawFrame funkcija uzreiz pārslēgtos ielādes režīmā.
   app.tokens = [];
   app.ethBalance = 0;
   app.txCount = 0;
