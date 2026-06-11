@@ -298,19 +298,34 @@ const App = Object.assign({}, AppState, {
       
       if (!mintData.success) throw new Error(mintData.error || 'Mint preparation failed');
       
-      showToast('✍️ Please sign the transaction...', 'info');
+      showToast('✍️ Simulating & preparing transaction...', 'info');
       
-      // Pārveido value un gasLimit no string uz BigInt (jo serveris atgriež string)
       const txValue = BigInt(mintData.transaction.value);
       const txGasLimit = BigInt(mintData.transaction.gasLimit);
       
-      console.log('📤 Sending mint transaction:', {
+      console.log('📤 Formatted mint configuration:', {
         to: mintData.transaction.to,
         valueWei: txValue.toString(),
         valueEth: ethers.formatEther(txValue),
         gasLimit: txGasLimit.toString()
       });
+
+      // --- LABOJUMS UN DOBULTĀ DROŠĪBA ---
+      // Pirms reālas sūtīšanas simulējam izpildi, lai noķertu precīzu 'revert' iemeslu
+      try {
+        await this.provider.estimateGas({
+          from: this.account,
+          to: mintData.transaction.to,
+          data: mintData.transaction.data,
+          value: txValue
+        });
+      } catch (estimateError) {
+        console.error("🚨 EVM Simulation failed:", estimateError);
+        const contractReason = estimateError.reason || estimateError.message || "Unknown contract revert reason";
+        throw new Error(`Smart Contract Revert: ${contractReason}. Please check your Base Sepolia balance or API response parameters.`);
+      }
       
+      showToast('✍️ Please sign the transaction in your wallet...', 'info');
       const tx = await this.signer.sendTransaction({
         to: mintData.transaction.to,
         data: mintData.transaction.data,
@@ -337,8 +352,8 @@ const App = Object.assign({}, AppState, {
     } catch (error) {
       console.error(error);
       let msg = error.message || 'Unknown error';
-      if (msg.includes('insufficient funds')) msg = '💰 Insufficient funds';
-      if (msg.includes('User denied')) msg = '🛑 Cancelled';
+      if (msg.includes('insufficient funds')) msg = '💰 Insufficient funds (Base Sepolia ETH required)';
+      if (msg.includes('User denied')) msg = '🛑 Cancelled by user';
       showToast('❌ ' + msg, 'error');
       alert('NFT minting failed.\n\n' + msg);
     } finally { 
