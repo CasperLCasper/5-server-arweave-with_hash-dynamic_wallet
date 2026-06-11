@@ -13,7 +13,6 @@ export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
-    // 1. Lietotāja sesijas un autentifikācijas pārbaude
     const user = await requireAuth(request, env);
     if (user instanceof Response) return user;
     if (!user || !user.address) {
@@ -22,7 +21,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // 2. Drošības ierobežojums (Rate-limit), lai neappludinātu API
     const rateKey = `mint:${user.address.toLowerCase()}`;
     if (!(await checkRateLimit({ key: rateKey, limit: 5, windowMs: 60000 }, env))) {
       return new Response(JSON.stringify({ success: false, error: 'Too many requests' }), {
@@ -30,7 +28,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // 3. Pieprasījuma datu nolasīšana un validācija
     let body;
     try {
       body = await request.json();
@@ -64,8 +61,8 @@ export async function onRequestPost(context) {
       ? videoHash 
       : ethers.ZeroHash;
 
-    // 4. Arweave / IPFS vārdu telpas standartizācija uz pastāvīgo Turbo Gateway
     let fullMetadataUri = metadataUri.trim();
+    
     if (fullMetadataUri.startsWith('Qm') || fullMetadataUri.startsWith('baf')) {
       fullMetadataUri = `https://turbo-gateway.com/${fullMetadataUri}`;
     } else if (fullMetadataUri.startsWith('ipfs://')) {
@@ -86,7 +83,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // 5. Dinamiskā stāvokļa nolasīšana tieši no viedā līguma
     const provider = new ethers.JsonRpcProvider(ALCHEMY_RPC_URL);
     const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, provider);
     
@@ -113,20 +109,23 @@ export async function onRequestPost(context) {
     console.log('  Contract Address:', CONTRACT_ADDRESS);
     console.log('  Mint price (ETH):', ethers.formatEther(mintPrice));
     console.log('  Nonce:', currentNonce.toString());
+    console.log('  Metadata URI:', fullMetadataUri);
+    console.log('  Image Hash:', finalImageHash);
+    console.log('  Video Hash:', finalVideoHash);
 
     if (serverAddress.toLowerCase() !== contractSigner.toLowerCase()) {
       console.error('🚨 KRITISKA KĻŪDA: Servera privātā atslēga nesakrīt ar līgumā reģistrēto parakstītāja adresi!');
+      console.error('  Server address:', serverAddress);
+      console.error('  Contract signer:', contractSigner);
     }
 
-    // 6. EIP-712 Domēna definīcija (Precīza atbilstība Solidity EIP712 konstruktoram)
     const domain = {
       name: 'WalletVisualizer',
       version: '1',
-      chainId: 84532, // Base Sepolia testnet ID
+      chainId: 84532,
       verifyingContract: CONTRACT_ADDRESS
     };
 
-    // 7. EIP-712 Tipu definīcija (Precīza atbilstība MINT_TYPEHASH struktūrai un secībai līgumā)
     const types = {
       MintRequest: [
         { name: 'wallet', type: 'address' },
@@ -137,19 +136,27 @@ export async function onRequestPost(context) {
       ]
     };
 
+    // Nonce atstāj kā BigInt — ethers to apstrādā pareizi
     const value = {
       wallet: wallet,
       metadataUri: fullMetadataUri,
       imageHash: finalImageHash,
       videoHash: finalVideoHash,
-      nonce: Number(currentNonce) // Nodrošinām pareizu datu tipu bibliotēkas apstrādei
+      nonce: currentNonce
     };
 
-    // 8. Kriptogrāfiskā paraksta ģenerēšana servera pusē ar privāto atslēgu
     const signature = await serverWallet.signTypedData(domain, types, value);
     console.log('  Generated Server Signature:', signature);
 
-    // 9. Transakcijas Calldata sagatavošana (enkodēšana) priekš kontrakta izsaukuma
+    // Verificē parakstu lokāli
+    try {
+      const recoveredAddress = ethers.verifyTypedData(domain, types, value, signature);
+      console.log('  Recovered address:', recoveredAddress);
+      console.log('  Signature valid:', recoveredAddress.toLowerCase() === serverAddress.toLowerCase() ? '✅ YES' : '❌ NO');
+    } catch (verifyErr) {
+      console.error('  Signature verification failed:', verifyErr.message);
+    }
+
     const iface = new ethers.Interface(WALLET_NFT_ABI);
     const data = iface.encodeFunctionData('mintWithSignature', [
       wallet, 
@@ -160,7 +167,6 @@ export async function onRequestPost(context) {
       signature
     ]);
 
-    // 10. Gāzes simulācija (ja tā neizdodas, nepārtraucam darbu, bet iedodam drošu noklusēto limitu)
     let estimatedGas;
     try {
       estimatedGas = await provider.estimateGas({
@@ -169,16 +175,16 @@ export async function onRequestPost(context) {
         data: data,
         value: mintPrice
       });
-      estimatedGas = (estimatedGas * 130n) / 100n; // 30% buferis drošībai tīkla noslodzes brīžos
+      estimatedGas = (estimatedGas * 130n) / 100n;
+      console.log('  Estimated gas (from simulation):', estimatedGas.toString());
     } catch (err) {
-      console.warn('⚠️ Server-side simulation skipped. Using safe fallback limit. Reason:', err.message);
-      estimatedGas = 380000n; // Stabils limits ERC721A mintēšanai ar string un hash ierakstiem stāvoklī
+      console.warn('⚠️ Gas estimation failed:', err.message);
+      estimatedGas = 380000n;
+      console.log('  Using fallback gas:', estimatedGas.toString());
     }
 
-    console.log('  Gas limit passed to frontend:', estimatedGas.toString());
     console.log('✅ MINT PREPARED SUCCESSFULLY');
 
-    // 11. Transakcijas parametru atgriešana frontendam parakstīšanai un nosūtīšanai
     const responseData = {
       success: true,
       transaction: {
