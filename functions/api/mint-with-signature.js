@@ -64,13 +64,13 @@ export async function onRequestPost(context) {
     let fullMetadataUri = metadataUri.trim();
     
     if (fullMetadataUri.startsWith('Qm') || fullMetadataUri.startsWith('baf')) {
-      fullMetadataUri = `https://turbo-gateway.com/${fullMetadataUri}`;
+      fullMetadataUri = `https://arweave.net/${fullMetadataUri}`;
     } else if (fullMetadataUri.startsWith('ipfs://')) {
       const cid = fullMetadataUri.substring(7);
-      fullMetadataUri = `https://turbo-gateway.com/${cid}`;
+      fullMetadataUri = `https://arweave.net/${cid}`;
     } else if (fullMetadataUri.startsWith('ar://')) {
       const txId = fullMetadataUri.substring(5);
-      fullMetadataUri = `https://turbo-gateway.com/${txId}`;
+      fullMetadataUri = `https://arweave.net/${txId}`;
     }
 
     const CONTRACT_ADDRESS = env.CONTRACT_ADDRESS;
@@ -136,7 +136,6 @@ export async function onRequestPost(context) {
       ]
     };
 
-    // Nonce atstāj kā BigInt — ethers to apstrādā pareizi
     const value = {
       wallet: wallet,
       metadataUri: fullMetadataUri,
@@ -148,7 +147,6 @@ export async function onRequestPost(context) {
     const signature = await serverWallet.signTypedData(domain, types, value);
     console.log('  Generated Server Signature:', signature);
 
-    // Verificē parakstu lokāli
     try {
       const recoveredAddress = ethers.verifyTypedData(domain, types, value, signature);
       console.log('  Recovered address:', recoveredAddress);
@@ -204,7 +202,7 @@ export async function onRequestPost(context) {
 
   } catch (error) {
     console.error('💥 Critical backend error:', error);
-    return new Response(JSON.stringify({ success: false, error: 'Server error: ' + error.message }), {
+    return new Response(JSON.stringify({ error: 'Server error: ' + error.message }), {
       status: 500, headers: { "Content-Type": "application/json" }
     });
   }
