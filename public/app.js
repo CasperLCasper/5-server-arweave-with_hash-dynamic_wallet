@@ -14,7 +14,7 @@ import {
   showArweavePreview, downloadFile, downloadAllFiles, calculateHashFromBlob 
 } from './modules/storage.js';
 import { startRecording, cleanupRecording } from './modules/recording.js';
-import { getCanvasDimensions, resizeCanvas, cleanup, drawFrame, animate, stopAnimation, renderSnapshot, updateNFTCenters, initParticlesOnce, cloneParticles, hashStringToInt, seededRandomFloat, createParticleCache, resumeVisualization } from './modules/visualizer.js';
+import { getCanvasDimensions, resizeCanvas, cleanup, drawFrame, animate, stopAnimation, renderSnapshot, updateNFTCenters, initParticlesOnce, cloneParticles, hashStringToInt, seededRandomFloat, createParticleCache } from './modules/visualizer.js';
 import { apiFetch } from './modules/api.js';
 
 import { ADDON_STYLES } from './themes.js';
@@ -322,9 +322,6 @@ const App = Object.assign({}, AppState, {
       await tx.wait();
       showToast('✅ NFT minted!', 'success');
       
-      // ✅ RESTARTĒ VIZUALIZĀCIJU UN AKTIVIZĒ POGAS
-      resumeVisualization(this);
-      
       const arweaveStatus = serverData.arweave.success ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
@@ -337,6 +334,15 @@ const App = Object.assign({}, AppState, {
         `\n${arweaveStatus} Arweave: ${serverData.arweave.success ? 'OK' : 'Failed (files saved locally)'}` +
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
+      // ✅ PĒC VEIKSMĪGAS MINTĒŠANAS — PĀRSLĒDZAMIES ATPAKAĻ UN RESTARTĒJAM VIZUALIZĀCIJU
+      showToast('🔄 Restoring visualization...', 'info');
+      await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      this.provider = new ethers.BrowserProvider(window.ethereum);
+      this.signer = await this.provider.getSigner();
+      this.account = await this.signer.getAddress();
+      await this.renderSnapshot(this.currentVizChain);
+      
     } catch (error) {
       console.error(error);
       let msg = error.message || 'Unknown error';
@@ -346,8 +352,18 @@ const App = Object.assign({}, AppState, {
       alert('NFT minting failed.\n\n' + msg);
     } finally { 
       setButtonLoading(UI.generateNFTBtn, false);
-      // ✅ Pat ja kļūda, restartē vizualizāciju
-      resumeVisualization(this);
+      
+      // ✅ PAT JA KĻŪDA — MĒĢINĀM ATJAUNOT VIZUALIZĀCIJU
+      try {
+        await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        this.provider = new ethers.BrowserProvider(window.ethereum);
+        this.signer = await this.provider.getSigner();
+        this.account = await this.signer.getAddress();
+        await this.renderSnapshot(this.currentVizChain);
+      } catch (restoreErr) {
+        console.warn('Could not restore visualization:', restoreErr);
+      }
     }
   },
 
