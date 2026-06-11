@@ -8,13 +8,6 @@ const WALLET_NFT_ABI = [
   "function getNonce(address wallet) public view returns (uint256)"
 ];
 
-// Palīgfunkcija BigInt serializācijai
-function serializeBigInt(obj) {
-  return JSON.parse(JSON.stringify(obj, (key, value) =>
-    typeof value === 'bigint' ? value.toString() : value
-  ));
-}
-
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -168,19 +161,19 @@ export async function onRequestPost(context) {
     console.log('  Estimated gas:', estimatedGas.toString());
     console.log('✅ MINT PREPARED');
 
-    // Izmanto serializeBigInt, lai visas BigInt vērtības būtu string
-    const responseData = serializeBigInt({
+    // NESERIALIZĒ AR serializeBigInt! Tikai string vērtības!
+    const responseData = {
       success: true,
       transaction: {
         to: CONTRACT_ADDRESS,
         data: data,
-        value: mintPrice,
-        gasLimit: estimatedGas
+        value: mintPrice.toString(),
+        gasLimit: estimatedGas.toString()
       },
       imageHash: finalImageHash,
       videoHash: finalVideoHash !== ethers.ZeroHash ? finalVideoHash : null,
       metadataUri: fullMetadataUri
-    });
+    };
 
     return new Response(JSON.stringify(responseData), {
       status: 200, headers: { "Content-Type": "application/json" }
