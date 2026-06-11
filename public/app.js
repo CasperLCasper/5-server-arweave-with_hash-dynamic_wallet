@@ -14,7 +14,7 @@ import {
   showArweavePreview, downloadFile, downloadAllFiles, calculateHashFromBlob 
 } from './modules/storage.js';
 import { startRecording, cleanupRecording } from './modules/recording.js';
-import { getCanvasDimensions, resizeCanvas, cleanup, drawFrame, animate, stopAnimation, renderSnapshot, updateNFTCenters, initParticlesOnce, cloneParticles, hashStringToInt, seededRandomFloat, createParticleCache } from './modules/visualizer.js';
+import { getCanvasDimensions, resizeCanvas, cleanup, drawFrame, animate, stopAnimation, renderSnapshot, updateNFTCenters, initParticlesOnce, cloneParticles, hashStringToInt, seededRandomFloat, createParticleCache, resumeVisualization } from './modules/visualizer.js';
 import { apiFetch } from './modules/api.js';
 
 import { ADDON_STYLES } from './themes.js';
@@ -322,6 +322,9 @@ const App = Object.assign({}, AppState, {
       await tx.wait();
       showToast('✅ NFT minted!', 'success');
       
+      // ✅ RESTARTĒ VIZUALIZĀCIJU UN AKTIVIZĒ POGAS
+      resumeVisualization(this);
+      
       const arweaveStatus = serverData.arweave.success ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
@@ -342,7 +345,9 @@ const App = Object.assign({}, AppState, {
       showToast('❌ ' + msg, 'error');
       alert('NFT minting failed.\n\n' + msg);
     } finally { 
-      setButtonLoading(UI.generateNFTBtn, false); 
+      setButtonLoading(UI.generateNFTBtn, false);
+      // ✅ Pat ja kļūda, restartē vizualizāciju
+      resumeVisualization(this);
     }
   },
 
