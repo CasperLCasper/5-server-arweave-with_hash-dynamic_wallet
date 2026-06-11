@@ -124,41 +124,11 @@ const App = Object.assign({}, AppState, {
     }
     
     setButtonLoading(UI.generateNFTBtn, true);
-    showToast('🔄 Switching to Base Sepolia network for minting...', 'info');
     
     try {
-      await switchToMintChain();
-      
-      await new Promise(resolve => setTimeout(resolve, 400));
-      
-      this.provider = new ethers.BrowserProvider(window.ethereum);
-      this.signer = await this.provider.getSigner();
-      this.account = await this.signer.getAddress();
-      
-      const loginSuccess = await login(this.signer, this.account);
-      if (!loginSuccess) {
-        showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
-        setButtonLoading(UI.generateNFTBtn, false);
-        return;
-      }
-      
-      const contractAddress = await getContractAddress();
-      let mintPriceEth = "?";
-      if (contractAddress) {
-        try {
-          const stableProvider = await getMintProvider();
-          const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
-          const priceWei = await contract.mintPrice();
-          mintPriceEth = ethers.formatEther(priceWei);
-          UI.generateNFTBtn.setAttribute('data-price', `${mintPriceEth} ETH + gas`);
-        } catch(e) {
-          console.warn("Could not fetch price on mint chain:", e);
-        }
-      }
-      
+      // ✅ 1. VISPI RMS IERAKSTA VIDEO UN UZŅEM ATTĒLU, KAMĒR ANIMĀCIJA VĒL AKTĪVA
       showToast('📸 Creating your NFT assets...', 'info');
       
-      // ✅ NEAPTU RAM ANIMĀCIJU — tā turpinās video ieraksta laikā
       const imageBlob = await new Promise((resolve, reject) => {
         UI.canvas.toBlob((blob) => {
           if (blob) resolve(blob);
@@ -169,7 +139,6 @@ const App = Object.assign({}, AppState, {
       const imageFileName = `snapshot_${Date.now()}.png`;
       const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
       
-      // ✅ VIDEO IERAKSTS AR AKTĪVU ANIMĀCIJU
       let videoBlob = null;
       let videoFileName = null;
       let videoFile = null;
@@ -197,6 +166,37 @@ const App = Object.assign({}, AppState, {
       } catch (error) {
         console.warn('Video recording failed:', error);
         showToast('🎬 Video failed, continuing without video', 'warning');
+      }
+      
+      // ✅ 2. TAGAD PĀRSLĒDZ TĪKLU UN TURPINI AR MINTĒŠANU
+      showToast('🔄 Switching to Base Sepolia network for minting...', 'info');
+      await switchToMintChain();
+      
+      await new Promise(resolve => setTimeout(resolve, 400));
+      
+      this.provider = new ethers.BrowserProvider(window.ethereum);
+      this.signer = await this.provider.getSigner();
+      this.account = await this.signer.getAddress();
+      
+      const loginSuccess = await login(this.signer, this.account);
+      if (!loginSuccess) {
+        showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
+        setButtonLoading(UI.generateNFTBtn, false);
+        return;
+      }
+      
+      const contractAddress = await getContractAddress();
+      let mintPriceEth = "?";
+      if (contractAddress) {
+        try {
+          const stableProvider = await getMintProvider();
+          const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
+          const priceWei = await contract.mintPrice();
+          mintPriceEth = ethers.formatEther(priceWei);
+          UI.generateNFTBtn.setAttribute('data-price', `${mintPriceEth} ETH + gas`);
+        } catch(e) {
+          console.warn("Could not fetch price on mint chain:", e);
+        }
       }
       
       showToast('📤 Uploading to Arweave (Turbo)...', 'info');
@@ -336,7 +336,7 @@ const App = Object.assign({}, AppState, {
         `\n${arweaveStatus} Arweave: ${serverData.arweave.success ? 'OK' : 'Failed (files saved locally)'}` +
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
-      // ✅ PĒC MINTĒŠANAS — PĀRSLĒDZAMIES ATPAKAĻ UN RESTARTĒJAM VIZUALIZĀCIJU
+      // ✅ PĒC MINTĒŠANAS — RESTARTĒ VIZUALIZĀCIJU
       showToast('🔄 Restoring visualization...', 'info');
       await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -353,7 +353,6 @@ const App = Object.assign({}, AppState, {
       showToast('❌ ' + msg, 'error');
       alert('NFT minting failed.\n\n' + msg);
       
-      // ✅ PAT JA KĻŪDA — MĒĢINĀM ATJAUNOT VIZUALIZĀCIJU
       try {
         await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
         await new Promise(resolve => setTimeout(resolve, 500));
