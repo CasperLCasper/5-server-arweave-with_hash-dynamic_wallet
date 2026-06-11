@@ -120,7 +120,7 @@ export async function onRequestPost(context) {
     return new Response(JSON.stringify({
       success: true,
       id: txId,
-      url: `https://turbo-gateway.com/${txId}`
+      url: `https://arweave.net/${txId}`
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" }
