@@ -10,6 +10,7 @@ import { showToast, setButtonLoading, updateTokenListUI, hideProgress, showProgr
 import { login, getNFTPrice, getContractAddress } from './modules/api.js'; 
 import { connectWallet, updateChainStatus, switchToMintChain, switchToVizChain } from './modules/web3.js';
 import { 
+  uploadMetadataToArweave,
   showArweavePreview, downloadFile, downloadAllFiles, calculateHashFromBlob 
 } from './modules/storage.js';
 import { startRecording, cleanupRecording } from './modules/recording.js';
@@ -178,21 +179,7 @@ const App = Object.assign({}, AppState, {
       }
       
       // ==========================================
-      // 2. SOLIS: SAGLABĀ ZIP LOKĀLI UZREIZ
-      // ==========================================
-      showToast('💾 Saving files locally...', 'info');
-      
-      const allFiles = [
-        { blob: imageBlob, filename: imageFileName }
-      ];
-      if (videoBlob && videoFileName) {
-        allFiles.push({ blob: videoBlob, filename: videoFileName });
-      }
-      await downloadAllFiles(allFiles);
-      showToast('✅ Files saved as ZIP!', 'success');
-      
-      // ==========================================
-      // 3. SOLIS: PĀRSLĒDZAS UZ BASE SEPOLIA
+      // 2. SOLIS: PĀRSLĒDZAS UZ BASE SEPOLIA
       // ==========================================
       showToast('🔄 Switching to Base Sepolia network for minting...', 'info');
       await switchToMintChain();
@@ -204,13 +191,12 @@ const App = Object.assign({}, AppState, {
       this.account = await this.signer.getAddress();
       
       // ==========================================
-      // 4. SOLIS: AUTENTIFIKĀCIJA
+      // 3. SOLIS: AUTENTIFIKĀCIJA
       // ==========================================
       const loginSuccess = await login(this.signer, this.account);
       if (!loginSuccess) {
         showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
         setButtonLoading(UI.generateNFTBtn, false);
-        // Atjauno vizualizāciju
         await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
         await new Promise(resolve => setTimeout(resolve, 500));
         this.provider = new ethers.BrowserProvider(window.ethereum);
@@ -234,7 +220,7 @@ const App = Object.assign({}, AppState, {
       }
       
       // ==========================================
-      // 5. SOLIS: IEGŪST MINTĒŠANAS DATUS NO SERVERA
+      // 4. SOLIS: IEGŪST MINTĒŠANAS DATUS NO SERVERA
       // ==========================================
       showToast('📝 Preparing mint transaction...', 'info');
       
@@ -260,7 +246,7 @@ const App = Object.assign({}, AppState, {
       if (!mintData.success) throw new Error(mintData.error || 'Mint preparation failed');
       
       // ==========================================
-      // 6. SOLIS: LIETOTĀJS PARAKSTA UN APMAKSĀ
+      // 5. SOLIS: LIETOTĀJS PARAKSTA UN APMAKSĀ
       // ==========================================
       const txValue = BigInt(mintData.transaction.value);
       const txGasLimit = BigInt(mintData.transaction.gasLimit);
@@ -285,7 +271,7 @@ const App = Object.assign({}, AppState, {
       showToast('✅ NFT minted! Transaction confirmed!', 'success');
       
       // ==========================================
-      // 7. SOLIS: TIKAI TAGAD — AUGŠUPIELĀDĒ ARWEAVE CAUR prepare-nft
+      // 6. SOLIS: AUGŠUPIELĀDĒ ARWEAVE CAUR prepare-nft
       // ==========================================
       showToast('📤 Uploading to Arweave (permanent storage)...', 'info');
       
@@ -293,8 +279,12 @@ const App = Object.assign({}, AppState, {
       let metadataId = null;
       let arweaveSuccess = false;
       
+      const gw = ARWEAVE_GATEWAY;
+      const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
+      const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
+      const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
+      
       try {
-        // Izmanto prepare-nft — to pašu funkciju, kas strādāja iepriekš
         const nftFormData = new FormData();
         nftFormData.append('image', imageFile);
         if (videoFile) nftFormData.append('video', videoFile);
@@ -312,14 +302,9 @@ const App = Object.assign({}, AppState, {
           serverData = await serverRes.json();
           arweaveSuccess = serverData.arweave?.success || false;
           
-          // Izveido metadata ar īstajiem URL un saglabā ZIP ar visu
-          const gw = ARWEAVE_GATEWAY;
-          const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
-          const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
-          const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
-          
           const imageUrl = serverData.image?.id ? `${gw}${serverData.image.id}` : `local://${imageHash}`;
           
+          // Izveido metadata
           const metadata = {
             name: "Wallet Visualization NFT",
             description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
@@ -341,7 +326,9 @@ const App = Object.assign({}, AppState, {
           const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
           const metadataFileName = `metadata_${Date.now()}.json`;
           
-          // Pievieno metadata ZIP ar visiem failiem
+          // ==========================================
+          // VIENĪGĀ ZIP LEJUPIELĀDE — ar visiem failiem
+          // ==========================================
           const completeFiles = [
             { blob: imageBlob, filename: imageFileName },
             { blob: metadataBlob, filename: metadataFileName }
@@ -350,12 +337,13 @@ const App = Object.assign({}, AppState, {
             completeFiles.push({ blob: videoBlob, filename: videoFileName });
           }
           await downloadAllFiles(completeFiles);
+          showToast('✅ All files saved as ZIP!', 'success');
           
           // Mēģina augšupielādēt metadata atsevišķi
           try {
-            const { uploadMetadataToArweave } = await import('./modules/storage.js');
             const metaRes = await uploadMetadataToArweave(metadata);
             metadataId = metaRes.id || metaRes.cid;
+            showToast('✅ Metadata uploaded to Arweave!', 'success');
           } catch (metaError) {
             console.warn('Metadata upload failed:', metaError);
           }
@@ -372,7 +360,7 @@ const App = Object.assign({}, AppState, {
       }
       
       // ==========================================
-      // 8. SOLIS: PARĀDA REZULTĀTU
+      // 7. SOLIS: PARĀDA REZULTĀTU
       // ==========================================
       const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
       alert(`✅ NFT minted successfully!\n\n` +
@@ -387,7 +375,7 @@ const App = Object.assign({}, AppState, {
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
       // ==========================================
-      // 9. SOLIS: ATJAUNO VIZUALIZĀCIJU
+      // 8. SOLIS: ATJAUNO VIZUALIZĀCIJU
       // ==========================================
       showToast('🔄 Restoring visualization...', 'info');
       await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
