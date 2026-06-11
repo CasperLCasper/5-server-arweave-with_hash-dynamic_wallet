@@ -282,9 +282,9 @@ const App = Object.assign({}, AppState, {
           body: JSON.stringify({
             wallet: this.account,
             metadataUri: metadataId 
-              ? `https://turbo-gateway.com/${metadataId}`
+              ? `${ARWEAVE_GATEWAY}${metadataId}`
               : serverData.image.id 
-                ? `https://turbo-gateway.com/${serverData.image.id}`
+                ? `${ARWEAVE_GATEWAY}${serverData.image.id}`
                 : `local://${serverData.image.hash}`,
             imageHash: serverData.image.hash,
             videoHash: serverData.video?.hash || null
@@ -310,9 +310,6 @@ const App = Object.assign({}, AppState, {
         gasLimit: txGasLimit.toString()
       });
 
-      // --- LABOJUMS: DROŠA TRANSAKCIJAS SŪTĪŠANA ---
-      // Netērējam laiku uz frontend estimateGas, jo backend jau mums ir iedevis gatavu txGasLimit.
-      // Tas pasargā no nepatiesiem Base Sepolia RPC 'missing revert data' kļūdas blīkšķiem frontendā.
       showToast('✍️ Please sign the transaction in your wallet...', 'info');
       const tx = await this.signer.sendTransaction({
         to: mintData.transaction.to,
