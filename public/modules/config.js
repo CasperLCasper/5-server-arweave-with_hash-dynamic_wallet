@@ -4,8 +4,8 @@
 
 import { getRpcUrl } from './chains.js';
 
-// Arweave Turbo gateway for data retrieval
-export const ARWEAVE_GATEWAY = "https://turbo-gateway.com/";
+// Arweave gateway for data retrieval
+export const ARWEAVE_GATEWAY = "https://arweave.net/";
 
 export const CONTRACT_ABI = [
   "function mintPrice() view returns (uint256)"
