@@ -158,6 +158,7 @@ const App = Object.assign({}, AppState, {
       
       showToast('📸 Creating your NFT assets...', 'info');
       
+      // ✅ NEAPTU RAM ANIMĀCIJU — tā turpinās video ieraksta laikā
       const imageBlob = await new Promise((resolve, reject) => {
         UI.canvas.toBlob((blob) => {
           if (blob) resolve(blob);
@@ -168,6 +169,7 @@ const App = Object.assign({}, AppState, {
       const imageFileName = `snapshot_${Date.now()}.png`;
       const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
       
+      // ✅ VIDEO IERAKSTS AR AKTĪVU ANIMĀCIJU
       let videoBlob = null;
       let videoFileName = null;
       let videoFile = null;
@@ -334,7 +336,7 @@ const App = Object.assign({}, AppState, {
         `\n${arweaveStatus} Arweave: ${serverData.arweave.success ? 'OK' : 'Failed (files saved locally)'}` +
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
-      // ✅ PĒC VEIKSMĪGAS MINTĒŠANAS — PĀRSLĒDZAMIES ATPAKAĻ UN RESTARTĒJAM VIZUALIZĀCIJU
+      // ✅ PĒC MINTĒŠANAS — PĀRSLĒDZAMIES ATPAKAĻ UN RESTARTĒJAM VIZUALIZĀCIJU
       showToast('🔄 Restoring visualization...', 'info');
       await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -350,8 +352,6 @@ const App = Object.assign({}, AppState, {
       if (msg.includes('User denied')) msg = '🛑 Cancelled by user';
       showToast('❌ ' + msg, 'error');
       alert('NFT minting failed.\n\n' + msg);
-    } finally { 
-      setButtonLoading(UI.generateNFTBtn, false);
       
       // ✅ PAT JA KĻŪDA — MĒĢINĀM ATJAUNOT VIZUALIZĀCIJU
       try {
@@ -364,6 +364,8 @@ const App = Object.assign({}, AppState, {
       } catch (restoreErr) {
         console.warn('Could not restore visualization:', restoreErr);
       }
+    } finally { 
+      setButtonLoading(UI.generateNFTBtn, false);
     }
   },
 
