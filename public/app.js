@@ -298,7 +298,7 @@ const App = Object.assign({}, AppState, {
       
       if (!mintData.success) throw new Error(mintData.error || 'Mint preparation failed');
       
-      showToast('✍️ Simulating & preparing transaction...', 'info');
+      showToast('✍️ Preparing transaction...', 'info');
       
       const txValue = BigInt(mintData.transaction.value);
       const txGasLimit = BigInt(mintData.transaction.gasLimit);
@@ -310,21 +310,9 @@ const App = Object.assign({}, AppState, {
         gasLimit: txGasLimit.toString()
       });
 
-      // --- LABOJUMS UN DOBULTĀ DROŠĪBA ---
-      // Pirms reālas sūtīšanas simulējam izpildi, lai noķertu precīzu 'revert' iemeslu
-      try {
-        await this.provider.estimateGas({
-          from: this.account,
-          to: mintData.transaction.to,
-          data: mintData.transaction.data,
-          value: txValue
-        });
-      } catch (estimateError) {
-        console.error("🚨 EVM Simulation failed:", estimateError);
-        const contractReason = estimateError.reason || estimateError.message || "Unknown contract revert reason";
-        throw new Error(`Smart Contract Revert: ${contractReason}. Please check your Base Sepolia balance or API response parameters.`);
-      }
-      
+      // --- LABOJUMS: DROŠA TRANSAKCIJAS SŪTĪŠANA ---
+      // Netērējam laiku uz frontend estimateGas, jo backend jau mums ir iedevis gatavu txGasLimit.
+      // Tas pasargā no nepatiesiem Base Sepolia RPC 'missing revert data' kļūdas blīkšķiem frontendā.
       showToast('✍️ Please sign the transaction in your wallet...', 'info');
       const tx = await this.signer.sendTransaction({
         to: mintData.transaction.to,
