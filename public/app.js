@@ -300,11 +300,22 @@ const App = Object.assign({}, AppState, {
       
       showToast('✍️ Please sign the transaction...', 'info');
       
+      // Pārveido value un gasLimit no string uz BigInt (jo serveris atgriež string)
+      const txValue = BigInt(mintData.transaction.value);
+      const txGasLimit = BigInt(mintData.transaction.gasLimit);
+      
+      console.log('📤 Sending mint transaction:', {
+        to: mintData.transaction.to,
+        valueWei: txValue.toString(),
+        valueEth: ethers.formatEther(txValue),
+        gasLimit: txGasLimit.toString()
+      });
+      
       const tx = await this.signer.sendTransaction({
         to: mintData.transaction.to,
         data: mintData.transaction.data,
-        value: mintData.transaction.value,
-        gasLimit: mintData.transaction.gasLimit
+        value: txValue,
+        gasLimit: txGasLimit
       });
       
       showToast('⏳ Waiting for confirmation...', 'info');
@@ -314,7 +325,7 @@ const App = Object.assign({}, AppState, {
       const arweaveStatus = serverData.arweave.success ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
-        `Price: ${ethers.formatEther(mintData.transaction.value)} ETH\n\n` +
+        `Price: ${ethers.formatEther(txValue)} ETH\n\n` +
         `🔐 Image Hash: ${serverData.image.hash}\n` +
         `${serverData.video ? '🔐 Video Hash: ' + serverData.video.hash + '\n' : ''}` +
         `${metadataId ? '📄 Arweave ID: ' + metadataId + '\n' : ''}` +
