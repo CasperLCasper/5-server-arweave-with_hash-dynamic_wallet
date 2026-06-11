@@ -115,7 +115,7 @@ export async function onRequestPost(context) {
       success: true,
       id: txId,
       hash: fileHash,
-      url: `https://turbo-gateway.com/${txId}`,
+      url: `https://arweave.net/${txId}`,
       owner: uploadResult.owner,
       dataCaches: uploadResult.dataCaches
     }), {
