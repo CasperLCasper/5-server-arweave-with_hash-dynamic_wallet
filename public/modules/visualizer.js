@@ -294,23 +294,6 @@ export function cloneParticles(app) {
   return app.initialParticles.map(p => ({ ...p, x: 0, y: 0 })); 
 }
 
-/**
- * Atjauno vizualizāciju pēc mintēšanas — restartē animāciju un aktivizē pogas
- */
-export function resumeVisualization(app) {
-  if (!app.account || !app.initialParticles.length) return;
-  
-  app.particles = cloneParticles(app);
-  
-  if (UI.recordBtn) UI.recordBtn.disabled = false;
-  if (UI.renderBtn) UI.renderBtn.disabled = false;
-  if (UI.generateNFTBtn) {
-    UI.generateNFTBtn.disabled = false;
-  }
-  
-  animate(app);
-}
-
 export async function renderSnapshot(app, chain) {
   if (!app.account) return;
 
