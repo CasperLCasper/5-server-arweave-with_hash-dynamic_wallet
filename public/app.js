@@ -129,7 +129,7 @@ const App = Object.assign({}, AppState, {
     // 0. SOLIS: ANTI-BOT — LIETOTĀJS PARAKSTA, LAI PIERĀDĪTU, KA IR DZĪVS
     // ==========================================
     try {
-      showToast('✍️ Please sign in wallet', 'info');
+      showToast('✍️ Personal signature', 'info');
       
       const antiBotMessage = `Verify you are human - Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${this.account}`;
       
