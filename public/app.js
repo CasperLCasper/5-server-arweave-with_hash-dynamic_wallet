@@ -126,9 +126,31 @@ const App = Object.assign({}, AppState, {
     setButtonLoading(UI.generateNFTBtn, true);
     
     // ==========================================
-    // 1. SOLIS: UZŅEM ATTĒLU UN VIDEO LOKĀLI
+    // 0. SOLIS: ANTI-BOT — LIETOTĀJS PARAKSTA, LAI PIERĀDĪTU, KA IR DZĪVS
     // ==========================================
     try {
+      showToast('✍️ Please sign the message to verify you are human...', 'info');
+      
+      const antiBotMessage = `Verify you are human - Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${this.account}`;
+      
+      let signature;
+      try {
+        signature = await this.signer.signMessage(antiBotMessage);
+        console.log('✅ Anti-bot signature:', signature.substring(0, 20) + '...');
+      } catch (signError) {
+        // Lietotājs atteicās parakstīt
+        if (signError.message?.includes('User denied') || signError.code === 'ACTION_REJECTED') {
+          showToast('🛑 Verification cancelled by user', 'warning');
+        } else {
+          showToast('❌ Verification failed: ' + (signError.message || 'Unknown error'), 'error');
+        }
+        setButtonLoading(UI.generateNFTBtn, false);
+        return;
+      }
+      
+      // ==========================================
+      // 1. SOLIS: UZŅEM ATTĒLU UN VIDEO LOKĀLI
+      // ==========================================
       showToast('📸 Creating your NFT assets...', 'info');
       
       // Uzņem attēlu
@@ -176,12 +198,10 @@ const App = Object.assign({}, AppState, {
       }
       
       // ==========================================
-      // 2. SOLIS: AUGŠUPIELĀDĒ VISU ARWEAVE
-      // (attēls + video + JSON metadata — pirms mint)
+      // 2. SOLIS: AUGŠUPIELĀDĒ ARWEAVE
       // ==========================================
       showToast('📤 Uploading to Arweave (Turbo)...', 'info');
       
-      // Vispirms upload attēlu un video caur prepare-nft
       const nftFormData = new FormData();
       nftFormData.append('image', imageFile);
       if (videoFile) nftFormData.append('video', videoFile);
@@ -213,7 +233,7 @@ const App = Object.assign({}, AppState, {
       const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
       const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
       
-      // Izveido metadata un augšupielādē JSON pirms mint
+      // Izveido metadata un augšupielādē JSON
       const metadata = {
         name: "Wallet Visualization NFT",
         description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
@@ -232,7 +252,6 @@ const App = Object.assign({}, AppState, {
       
       if (serverData.video?.id) metadata.animation_url = `${gw}${serverData.video.id}`;
       
-      // Augšupielādē JSON metadata pirms mint
       let metaId = null;
       try {
         const metaRes = await uploadMetadataToArweave(metadata);
@@ -338,7 +357,7 @@ const App = Object.assign({}, AppState, {
       showToast('✅ NFT minted!', 'success');
       
       // ==========================================
-      // 6. SOLIS: SAGLABĀ ZIP AR VISIEM FAILIEM
+      // 6. SOLIS: SAGLABĀ ZIP
       // ==========================================
       const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
       const metadataFileName = `metadata_${Date.now()}.json`;
