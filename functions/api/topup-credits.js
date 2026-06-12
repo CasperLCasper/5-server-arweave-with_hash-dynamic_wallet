@@ -20,8 +20,8 @@ export async function onRequestGet(context) {
     const ethBalance = await provider.getBalance(address);
     console.log('💰 ETH bilance:', ethers.formatEther(ethBalance), 'ETH');
 
-    // Fiksēta summa: 0.001 ETH
-    const topUpAmountEth = '0.001';
+    // Fiksēta summa: 0.01 ETH
+    const topUpAmountEth = '0.01';
     const topUpAmountWei = ethers.parseEther(topUpAmountEth);
 
     if (ethBalance < topUpAmountWei) {
