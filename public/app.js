@@ -126,21 +126,19 @@ const App = Object.assign({}, AppState, {
     setButtonLoading(UI.generateNFTBtn, true);
     
     // ==========================================
-    // 0. SOLIS: ANTI-BOT — LIETOTĀJS PARAKSTA, LAI PIERĀDĪTU, KA IR DZĪVS
+    // 0. SOLIS: ANTI-BOT — LIETOTĀJS PARAKSTA
     // ==========================================
     try {
-      showToast('✍️ Personal signature', 'info');
+      showToast('✍️ Sign to continue...', 'info');
       
-      const antiBotMessage = `Verify you are human - Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${this.account}`;
+      const antiBotMessage = `Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${this.account}`;
       
-      let signature;
       try {
-        signature = await this.signer.signMessage(antiBotMessage);
-        console.log('✅ Anti-bot signature:', signature.substring(0, 20) + '...');
+        await this.signer.signMessage(antiBotMessage);
+        console.log('✅ Anti-bot signature verified');
       } catch (signError) {
-        // Lietotājs atteicās parakstīt
         if (signError.message?.includes('User denied') || signError.code === 'ACTION_REJECTED') {
-          showToast('🛑 Verification cancelled by user', 'warning');
+          showToast('🛑 Cancelled by user', 'warning');
         } else {
           showToast('❌ Verification failed: ' + (signError.message || 'Unknown error'), 'error');
         }
@@ -153,7 +151,6 @@ const App = Object.assign({}, AppState, {
       // ==========================================
       showToast('📸 Creating your NFT assets...', 'info');
       
-      // Uzņem attēlu
       const imageBlob = await new Promise((resolve, reject) => {
         UI.canvas.toBlob((blob) => {
           if (blob) resolve(blob);
@@ -165,7 +162,6 @@ const App = Object.assign({}, AppState, {
       const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
       const imageHash = await calculateHashFromBlob(imageBlob);
       
-      // Uzņem video (15 sekundes)
       let videoBlob = null;
       let videoFileName = null;
       let videoFile = null;
@@ -233,7 +229,6 @@ const App = Object.assign({}, AppState, {
       const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
       const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
       
-      // Izveido metadata un augšupielādē JSON
       const metadata = {
         name: "Wallet Visualization NFT",
         description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
@@ -274,7 +269,6 @@ const App = Object.assign({}, AppState, {
       this.signer = await this.provider.getSigner();
       this.account = await this.signer.getAddress();
       
-      // Autentifikācija
       const loginSuccess = await login(this.signer, this.account);
       if (!loginSuccess) {
         showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
@@ -357,7 +351,25 @@ const App = Object.assign({}, AppState, {
       showToast('✅ NFT minted!', 'success');
       
       // ==========================================
-      // 6. SOLIS: SAGLABĀ ZIP
+      // 6. SOLIS: WEBHOOK — AUTOMĀTISKI PĒRK KREDĪTUS
+      // ==========================================
+      try {
+        console.log('🔔 Calling webhook to buy credits...');
+        await fetch('/api/buy-credits-webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            txHash: tx.hash,
+            ethAmount: txValue.toString()
+          })
+        });
+        console.log('✅ Webhook called successfully');
+      } catch (webhookError) {
+        console.warn('⚠️ Webhook call failed (non-critical):', webhookError.message);
+      }
+      
+      // ==========================================
+      // 7. SOLIS: SAGLABĀ ZIP
       // ==========================================
       const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
       const metadataFileName = `metadata_${Date.now()}.json`;
@@ -375,7 +387,7 @@ const App = Object.assign({}, AppState, {
       showToast('✅ All files saved as ZIP!', 'success');
       
       // ==========================================
-      // 7. SOLIS: PARĀDA REZULTĀTU
+      // 8. SOLIS: PARĀDA REZULTĀTU
       // ==========================================
       const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
@@ -390,7 +402,7 @@ const App = Object.assign({}, AppState, {
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
       // ==========================================
-      // 8. SOLIS: ATJAUNO VIZUALIZĀCIJU
+      // 9. SOLIS: ATJAUNO VIZUALIZĀCIJU
       // ==========================================
       showToast('🔄 Restoring visualization...', 'info');
       await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
@@ -409,7 +421,6 @@ const App = Object.assign({}, AppState, {
       showToast('❌ ' + msg, 'error');
       alert('NFT minting failed.\n\n' + msg);
       
-      // Atjauno vizualizāciju
       try {
         await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
         await new Promise(resolve => setTimeout(resolve, 500));
