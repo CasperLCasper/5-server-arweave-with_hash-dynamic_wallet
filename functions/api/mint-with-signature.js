@@ -37,7 +37,7 @@ export async function onRequestPost(context) {
       });
     }
 
-    const { wallet, metadataUri, imageHash, videoHash } = body;
+    const { wallet, metadataUri, imageHash, videoHash, storageCostWei } = body;
     if (!wallet || !metadataUri || !ethers.isAddress(wallet)) {
       return new Response(JSON.stringify({ success: false, error: 'Invalid input' }), {
         status: 400, headers: { "Content-Type": "application/json" }
@@ -99,6 +99,10 @@ export async function onRequestPost(context) {
       });
     }
 
+    // ✅ PIEVIENO STORAGE MAKSU PIE MINT CENAS
+    const storageCost = BigInt(storageCostWei || "0");
+    const totalPrice = mintPrice + storageCost;
+
     const serverWallet = new ethers.Wallet(SERVER_PRIVATE_KEY);
     const serverAddress = await serverWallet.getAddress();
 
@@ -108,6 +112,8 @@ export async function onRequestPost(context) {
     console.log('  Registered Signer in Contract:', contractSigner);
     console.log('  Contract Address:', CONTRACT_ADDRESS);
     console.log('  Mint price (ETH):', ethers.formatEther(mintPrice));
+    console.log('  Storage cost (ETH):', storageCost > 0 ? ethers.formatEther(storageCost) : '0');
+    console.log('  Total price (ETH):', ethers.formatEther(totalPrice));
     console.log('  Nonce:', currentNonce.toString());
     console.log('  Metadata URI:', fullMetadataUri);
     console.log('  Image Hash:', finalImageHash);
@@ -171,7 +177,7 @@ export async function onRequestPost(context) {
         from: wallet,
         to: CONTRACT_ADDRESS,
         data: data,
-        value: mintPrice
+        value: totalPrice
       });
       estimatedGas = (estimatedGas * 130n) / 100n;
       console.log('  Estimated gas (from simulation):', estimatedGas.toString());
@@ -188,12 +194,17 @@ export async function onRequestPost(context) {
       transaction: {
         to: CONTRACT_ADDRESS,
         data: data,
-        value: mintPrice.toString(),
+        value: totalPrice.toString(),
         gasLimit: estimatedGas.toString()
       },
       imageHash: finalImageHash,
       videoHash: finalVideoHash !== ethers.ZeroHash ? finalVideoHash : null,
-      metadataUri: fullMetadataUri
+      metadataUri: fullMetadataUri,
+      priceBreakdown: {
+        mintPrice: mintPrice.toString(),
+        storageCost: storageCost.toString(),
+        total: totalPrice.toString()
+      }
     };
 
     return new Response(JSON.stringify(responseData), {
