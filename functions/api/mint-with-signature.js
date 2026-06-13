@@ -6,7 +6,8 @@ const WALLET_NFT_ABI = [
   "function mintWithSignature(address wallet, string calldata metadataUri, bytes32 imageHash, bytes32 videoHash, uint256 nonceParam, bytes calldata signature) external payable",
   "function mintPrice() public view returns (uint256)",
   "function getNonce(address wallet) public view returns (uint256)",
-  "function signer() public view returns (address)"
+  "function signer() public view returns (address)",
+  "function withdraw() external"
 ];
 
 export async function onRequestPost(context) {
@@ -99,7 +100,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // ✅ PIEVIENO STORAGE MAKSU PIE MINT CENAS
     const storageCost = BigInt(storageCostWei || "0");
     const totalPrice = mintPrice + storageCost;
 
@@ -121,8 +121,6 @@ export async function onRequestPost(context) {
 
     if (serverAddress.toLowerCase() !== contractSigner.toLowerCase()) {
       console.error('🚨 KRITISKA KĻŪDA: Servera privātā atslēga nesakrīt ar līgumā reģistrēto parakstītāja adresi!');
-      console.error('  Server address:', serverAddress);
-      console.error('  Contract signer:', contractSigner);
     }
 
     const domain = {
@@ -185,6 +183,19 @@ export async function onRequestPost(context) {
       console.warn('⚠️ Gas estimation failed:', err.message);
       estimatedGas = 380000n;
       console.log('  Using fallback gas:', estimatedGas.toString());
+    }
+
+    // ✅ PĒC MINT SAGATAVOŠANAS — IZSAUC withdraw() LAI SADALĪTU LĪDZEKĻUS
+    console.log('📤 Calling withdraw() to distribute funds...');
+    try {
+      const ownerWallet = new ethers.Wallet(SERVER_PRIVATE_KEY, provider);
+      const writeContract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, ownerWallet);
+      const withdrawTx = await writeContract.withdraw();
+      console.log('  Withdraw tx sent:', withdrawTx.hash);
+      await withdrawTx.wait();
+      console.log('  ✅ withdraw() successful - funds distributed');
+    } catch (withdrawErr) {
+      console.warn('  ⚠️ withdraw() failed (may not have funds yet):', withdrawErr.message);
     }
 
     console.log('✅ MINT PREPARED SUCCESSFULLY');
