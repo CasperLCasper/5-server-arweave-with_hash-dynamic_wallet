@@ -323,7 +323,6 @@ const App = Object.assign({}, AppState, {
         breakdown: mintData.priceBreakdown
       });
 
-      // Parāda lietotājam precīzu cenu sadalījumu
       showToast(`💰 Total: ${totalPriceEth} ETH (Mint: ${mintPriceEth} + Storage: ${storageCostEthFormatted}) + gas`, 'info');
       
       showToast('✍️ Please sign the transaction in your wallet...', 'info');
@@ -424,8 +423,7 @@ const App = Object.assign({}, AppState, {
     if (UI.generateNFTBtn) {
       UI.generateNFTBtn.disabled = false;
       const price = await getNFTPrice();
-      // Uz pogas: tikai mint cena + storage (bez gas)
-      UI.generateNFTBtn.setAttribute('data-price', `${price.replace(' + gas', '')} + storage`);
+      UI.generateNFTBtn.setAttribute('data-price', `${price} + Arweave storage`);
     }
   },
 
