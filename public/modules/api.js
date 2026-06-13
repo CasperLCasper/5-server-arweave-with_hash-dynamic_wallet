@@ -210,7 +210,7 @@ export async function getNFTPrice() {
     const priceWei = await contract.mintPrice();
     const priceEth = ethers.formatEther(priceWei);
     
-    return `${priceEth} ETH + gas`;
+    return `${priceEth} ETH`;
   } catch (error) {
     console.error("Failed to get NFT price:", error);
     return "Price unavailable";
@@ -220,7 +220,6 @@ export async function getNFTPrice() {
 export async function getTokens(account, chain) {
   if (!account) return [];
   try {
-    // ✅ DROŠĪBAS TULKS: Ja backendā joprojām tiek izmantots 'mumbai', pārtulkojam to šeit dApp pusē
     const backendChain = chain === 'polygonAmoy' ? 'mumbai' : chain;
     
     const url = `/api/getTokens?account=${encodeURIComponent(account)}&chain=${backendChain}`;
@@ -260,7 +259,6 @@ export async function getTokens(account, chain) {
 export async function getAllNFTs(account, chain) {
   if (!account) return [];
   try {
-    // ✅ DROŠĪBAS TULKS: Ja backendā joprojām tiek izmantots 'mumbai', pārtulkojam to šeit dApp pusē
     const backendChain = chain === 'polygonAmoy' ? 'mumbai' : chain;
     
     const allNFTs = [];
