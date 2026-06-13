@@ -102,8 +102,8 @@ export async function onRequestPost(context) {
     let arweaveError = null;
     let totalBytesUploaded = 0;
     let storageCostWei = "0";
+    let storageCostEth = "0";
 
-    // Mēģina augšupielādēt Arweave tikai ja ir atslēga
     if (env.ARWEAVE_STORAGE_KEY) {
       try {
         const signer = new EthereumSigner(env.ARWEAVE_STORAGE_KEY);
@@ -177,14 +177,19 @@ export async function onRequestPost(context) {
           }
         }
 
-        // Aprēķina storage izmaksas ETH (ar 35% fee iekļautu)
+        // Aprēķina storage izmaksas
         if (totalBytesUploaded > 0) {
           try {
+            // getTokenPriceForBytes atgriež ETH kā decimālu stringu (ar 35% fee)
             const { tokenPrice } = await turbo.getTokenPriceForBytes({ 
               byteCount: totalBytesUploaded 
             });
-            storageCostWei = tokenPrice.toString();
-            console.log(`💰 Storage cost: ${storageCostWei} wei (${ethers.formatEther(storageCostWei)} ETH) for ${totalBytesUploaded} bytes`);
+            
+            storageCostEth = tokenPrice.toString();
+            // Pārvērš ETH uz wei priekš kontrakta
+            storageCostWei = ethers.parseEther(storageCostEth).toString();
+            
+            console.log(`💰 Storage cost: ${storageCostEth} ETH (${storageCostWei} wei) for ${totalBytesUploaded} bytes`);
           } catch (priceError) {
             console.warn('⚠️ Could not calculate storage price:', priceError.message);
           }
@@ -221,7 +226,7 @@ export async function onRequestPost(context) {
       storage: {
         bytesUploaded: totalBytesUploaded,
         costWei: storageCostWei,
-        costEth: storageCostWei !== "0" ? ethers.formatEther(storageCostWei) : "0"
+        costEth: storageCostEth
       }
     };
 
