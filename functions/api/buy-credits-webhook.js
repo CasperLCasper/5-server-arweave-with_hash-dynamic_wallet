@@ -21,17 +21,17 @@ export async function onRequestPost(context) {
 
     console.log(`🔄 Webhook: processing tx ${txHash}, amount: ${ethers.formatEther(ethAmount)} ETH`);
 
-    const privateKey = env.ARWEAVE_STORAGE_KEY;
+    const storageKey = env.ARWEAVE_STORAGE_KEY;
     const contractAddress = env.CONTRACT_ADDRESS;
     const rpcUrl = env.ALCHEMY_RPC_URL || 'https://sepolia.base.org';
 
-    if (!privateKey) throw new Error('ARWEAVE_STORAGE_KEY not configured');
+    if (!storageKey) throw new Error('ARWEAVE_STORAGE_KEY not configured');
     if (!contractAddress) throw new Error('CONTRACT_ADDRESS not configured');
 
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const wallet = new ethers.Wallet(privateKey, provider);
+    const wallet = new ethers.Wallet(storageKey, provider);
 
-    // 1. Izsauc kontrakta withdraw()
+    // 1. Izsauc kontrakta withdraw() — tagad bez onlyOwner, storage maks drīkst
     console.log('📤 Calling withdraw() on contract...');
     const contract = new ethers.Contract(contractAddress, WALLET_NFT_ABI, wallet);
     const tx = await contract.withdraw();
@@ -39,7 +39,7 @@ export async function onRequestPost(context) {
     console.log('✅ withdraw() successful:', tx.hash);
 
     // 2. Pērk kredītus TIKAI par šī NFT storage summu
-    const signer = new EthereumSigner(privateKey);
+    const signer = new EthereumSigner(storageKey);
     const turbo = TurboFactory.authenticated({
       signer,
       token: 'base-eth',
@@ -64,7 +64,7 @@ export async function onRequestPost(context) {
 
     return new Response(JSON.stringify({
       success: true,
-      txHash: tx.hash,
+      withdrawTx: tx.hash,
       ethSpent: ethers.formatEther(ethAmount),
       creditsBefore: creditsBefore.toString(),
       creditsAfter: creditsAfter.toString(),
