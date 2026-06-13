@@ -218,6 +218,7 @@ const App = Object.assign({}, AppState, {
       const imageUrl = serverData.image.id ? `${gw}${serverData.image.id}` : `local://${imageHash}`;
       const arweaveSuccess = serverData.arweave?.success || false;
       const storageCostWei = serverData.storage?.costWei || "0";
+      const storageCostEth = serverData.storage?.costEth || "0";
       
       const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
       const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
@@ -273,23 +274,6 @@ const App = Object.assign({}, AppState, {
         return;
       }
       
-      const contractAddress = await getContractAddress();
-      if (contractAddress) {
-        try {
-          const stableProvider = await getMintProvider();
-          const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
-          const priceWei = await contract.mintPrice();
-          const mintPriceEth = ethers.formatEther(priceWei);
-          
-          // Parāda kopējo cenu (mint + storage)
-          const totalPriceWei = priceWei + BigInt(storageCostWei);
-          const totalPriceEth = ethers.formatEther(totalPriceWei);
-          UI.generateNFTBtn.setAttribute('data-price', `${totalPriceEth} ETH + gas`);
-        } catch(e) {
-          console.warn("Could not fetch price on mint chain:", e);
-        }
-      }
-      
       // 4. IEGŪST MINTĒŠANAS DATUS AR STORAGE MAKSU
       showToast('📝 Preparing mint...', 'info');
       
@@ -319,18 +303,29 @@ const App = Object.assign({}, AppState, {
       
       if (!mintData.success) throw new Error(mintData.error || 'Mint preparation failed');
       
-      // 5. LIETOTĀJS PARAKSTA UN APMAKSĀ
+      // 5. PARĀDA GALĪGO CENU UN PRASA PARAKSTĪT
       const txValue = BigInt(mintData.transaction.value);
       const txGasLimit = BigInt(mintData.transaction.gasLimit);
+      
+      const totalPriceEth = ethers.formatEther(txValue);
+      const mintPriceEth = mintData.priceBreakdown 
+        ? ethers.formatEther(mintData.priceBreakdown.mintPrice) 
+        : "0";
+      const storageCostEthFormatted = mintData.priceBreakdown?.storageCost 
+        ? ethers.formatEther(mintData.priceBreakdown.storageCost) 
+        : storageCostEth || "0";
       
       console.log('📤 Sending mint transaction:', {
         to: mintData.transaction.to,
         valueWei: txValue.toString(),
-        valueEth: ethers.formatEther(txValue),
+        valueEth: totalPriceEth,
         gasLimit: txGasLimit.toString(),
         breakdown: mintData.priceBreakdown
       });
 
+      // Parāda lietotājam precīzu cenu sadalījumu
+      showToast(`💰 Total: ${totalPriceEth} ETH (Mint: ${mintPriceEth} + Storage: ${storageCostEthFormatted}) + gas`, 'info');
+      
       showToast('✍️ Please sign the transaction in your wallet...', 'info');
       const tx = await this.signer.sendTransaction({
         to: mintData.transaction.to,
@@ -377,8 +372,8 @@ const App = Object.assign({}, AppState, {
       const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
-        `Price: ${ethers.formatEther(txValue)} ETH\n` +
-        `(Mint: ${ethers.formatEther(mintData.priceBreakdown?.mintPrice || 0)} + Storage: ${ethers.formatEther(mintData.priceBreakdown?.storageCost || 0)})\n\n` +
+        `Price: ${totalPriceEth} ETH\n` +
+        `(Mint: ${mintPriceEth} + Storage: ${storageCostEthFormatted})\n\n` +
         `🔐 Image Hash: ${imageHash}\n` +
         `${videoHash ? '🔐 Video Hash: ' + videoHash + '\n' : ''}` +
         `${metaId ? '📄 Arweave Metadata: ' + metaId + '\n' : ''}` +
@@ -429,7 +424,8 @@ const App = Object.assign({}, AppState, {
     if (UI.generateNFTBtn) {
       UI.generateNFTBtn.disabled = false;
       const price = await getNFTPrice();
-      UI.generateNFTBtn.setAttribute('data-price', price);
+      // Uz pogas rāda: mint cena + storage + gas (vispārīgi)
+      UI.generateNFTBtn.setAttribute('data-price', `${price} + storage + gas`);
     }
   },
 
