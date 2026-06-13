@@ -1,5 +1,10 @@
+// functions/api/buy-credits-webhook.js
 import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 import { ethers } from 'ethers';
+
+const WALLET_NFT_ABI = [
+  "function withdraw() external"
+];
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -14,17 +19,26 @@ export async function onRequestPost(context) {
       });
     }
 
-    console.log(`🔄 Webhook: Buying Turbo Credits from ${ethers.formatEther(ethAmount)} ETH (tx: ${txHash})...`);
+    console.log(`🔄 Webhook: processing tx ${txHash}, amount: ${ethers.formatEther(ethAmount)} ETH`);
 
     const privateKey = env.ARWEAVE_STORAGE_KEY;
-    if (!privateKey) {
-      throw new Error('ARWEAVE_STORAGE_KEY not configured');
-    }
+    const contractAddress = env.CONTRACT_ADDRESS;
+    const rpcUrl = env.ALCHEMY_RPC_URL || 'https://sepolia.base.org';
 
-    const provider = new ethers.JsonRpcProvider('https://sepolia.base.org');
+    if (!privateKey) throw new Error('ARWEAVE_STORAGE_KEY not configured');
+    if (!contractAddress) throw new Error('CONTRACT_ADDRESS not configured');
+
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
     const wallet = new ethers.Wallet(privateKey, provider);
-    const address = await wallet.getAddress();
 
+    // 1. Izsauc kontrakta withdraw()
+    console.log('📤 Calling withdraw() on contract...');
+    const contract = new ethers.Contract(contractAddress, WALLET_NFT_ABI, wallet);
+    const tx = await contract.withdraw();
+    await tx.wait();
+    console.log('✅ withdraw() successful:', tx.hash);
+
+    // 2. Pērk kredītus TIKAI par šī NFT storage summu
     const signer = new EthereumSigner(privateKey);
     const turbo = TurboFactory.authenticated({
       signer,
@@ -34,29 +48,15 @@ export async function onRequestPost(context) {
       uploadServiceConfig: { url: 'https://upload.ardrive.dev' }
     });
 
-    // Pārbauda bilanci pirms
     const { winc: creditsBefore } = await turbo.getBalance();
     
-    // 80% no storage daļas aiziet kredītos, 20% paliek kā rezerve
-    const amountForCredits = (BigInt(ethAmount) * 80n) / 100n;
-    
-    if (amountForCredits <= 0) {
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: 'Amount too small for credits' 
-      }), {
-        status: 400, headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    const result = await turbo.topUpWithTokens({ 
-      tokenAmount: amountForCredits 
-    });
+    console.log(`💳 Buying credits for ${ethers.formatEther(ethAmount)} ETH...`);
+    await turbo.topUpWithTokens({ tokenAmount: ethAmount });
 
     const { winc: creditsAfter } = await turbo.getBalance();
 
     console.log('✅ Credits purchased:', {
-      ethSpent: ethers.formatEther(amountForCredits),
+      ethSpent: ethers.formatEther(ethAmount),
       creditsBefore: creditsBefore.toString(),
       creditsAfter: creditsAfter.toString(),
       added: (creditsAfter - creditsBefore).toString()
@@ -64,7 +64,8 @@ export async function onRequestPost(context) {
 
     return new Response(JSON.stringify({
       success: true,
-      ethSpent: ethers.formatEther(amountForCredits),
+      txHash: tx.hash,
+      ethSpent: ethers.formatEther(ethAmount),
       creditsBefore: creditsBefore.toString(),
       creditsAfter: creditsAfter.toString(),
       added: (creditsAfter - creditsBefore).toString()
@@ -73,7 +74,7 @@ export async function onRequestPost(context) {
     });
 
   } catch (error) {
-    console.error('💥 Webhook credit purchase error:', error);
+    console.error('💥 Webhook error:', error);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500, headers: { "Content-Type": "application/json" }
     });
