@@ -99,6 +99,8 @@ export async function onRequestPost(context) {
     let imageId = null;
     let videoId = null;
     let arweaveError = null;
+    let totalBytesUploaded = 0;
+    let storageCostEth = "0";
 
     // Mēģina augšupielādēt Arweave tikai ja ir atslēga
     if (env.ARWEAVE_STORAGE_KEY) {
@@ -115,6 +117,9 @@ export async function onRequestPost(context) {
             url: 'https://upload.ardrive.dev',
           }
         });
+
+        // Pārbauda kredītu bilanci pirms upload
+        const { winc: wincBefore } = await turbo.getBalance();
 
         // Upload image
         try {
@@ -135,6 +140,7 @@ export async function onRequestPost(context) {
           imageId = imageResult?.id;
           if (imageId) {
             console.log('✅ Image uploaded to Arweave:', imageId);
+            totalBytesUploaded += imageSize;
           } else {
             console.warn('⚠️ Turbo SDK did not return TX ID for image');
             arweaveError = 'No TX ID returned for image';
@@ -164,11 +170,30 @@ export async function onRequestPost(context) {
             videoId = videoResult?.id;
             if (videoId) {
               console.log('✅ Video uploaded to Arweave:', videoId);
+              totalBytesUploaded += videoSize;
             } else {
               console.warn('⚠️ Turbo SDK did not return TX ID for video');
             }
           } catch (videoError) {
             console.warn('⚠️ Arweave video upload error:', videoError.message);
+          }
+        }
+
+        // Aprēķina iztērētos kredītus
+        const { winc: wincAfter } = await turbo.getBalance();
+        const wincSpent = wincBefore - wincAfter;
+        
+        // Aprēķina storage izmaksas ETH (ar 35% fee iekļautu)
+        if (totalBytesUploaded > 0) {
+          try {
+            const { tokenPrice } = await turbo.getTokenPriceForBytes({ 
+              byteCount: totalBytesUploaded 
+            });
+            storageCostEth = tokenPrice.toString();
+            console.log(`💰 Storage cost: ${storageCostEth} wei (${ethers.formatEther(storageCostEth)} ETH) for ${totalBytesUploaded} bytes`);
+            console.log(`📊 Winc spent: ${wincSpent.toString()}`);
+          } catch (priceError) {
+            console.warn('⚠️ Could not calculate storage price:', priceError.message);
           }
         }
       } catch (initError) {
@@ -199,6 +224,11 @@ export async function onRequestPost(context) {
       arweave: {
         success: !!(imageId || videoId),
         error: arweaveError
+      },
+      storage: {
+        bytesUploaded: totalBytesUploaded,
+        costWei: storageCostEth,
+        costEth: storageCostEth !== "0" ? ethers.formatEther(storageCostEth) : "0"
       }
     };
 
