@@ -1,6 +1,7 @@
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
 import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
+import { ethers } from 'ethers';
 import crypto from 'crypto';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'video/mp4', 'video/webm'];
@@ -100,7 +101,7 @@ export async function onRequestPost(context) {
     let videoId = null;
     let arweaveError = null;
     let totalBytesUploaded = 0;
-    let storageCostEth = "0";
+    let storageCostWei = "0";
 
     // Mēģina augšupielādēt Arweave tikai ja ir atslēga
     if (env.ARWEAVE_STORAGE_KEY) {
@@ -117,9 +118,6 @@ export async function onRequestPost(context) {
             url: 'https://upload.ardrive.dev',
           }
         });
-
-        // Pārbauda kredītu bilanci pirms upload
-        const { winc: wincBefore } = await turbo.getBalance();
 
         // Upload image
         try {
@@ -179,19 +177,14 @@ export async function onRequestPost(context) {
           }
         }
 
-        // Aprēķina iztērētos kredītus
-        const { winc: wincAfter } = await turbo.getBalance();
-        const wincSpent = wincBefore - wincAfter;
-        
         // Aprēķina storage izmaksas ETH (ar 35% fee iekļautu)
         if (totalBytesUploaded > 0) {
           try {
             const { tokenPrice } = await turbo.getTokenPriceForBytes({ 
               byteCount: totalBytesUploaded 
             });
-            storageCostEth = tokenPrice.toString();
-            console.log(`💰 Storage cost: ${storageCostEth} wei (${ethers.formatEther(storageCostEth)} ETH) for ${totalBytesUploaded} bytes`);
-            console.log(`📊 Winc spent: ${wincSpent.toString()}`);
+            storageCostWei = tokenPrice.toString();
+            console.log(`💰 Storage cost: ${storageCostWei} wei (${ethers.formatEther(storageCostWei)} ETH) for ${totalBytesUploaded} bytes`);
           } catch (priceError) {
             console.warn('⚠️ Could not calculate storage price:', priceError.message);
           }
@@ -227,8 +220,8 @@ export async function onRequestPost(context) {
       },
       storage: {
         bytesUploaded: totalBytesUploaded,
-        costWei: storageCostEth,
-        costEth: storageCostEth !== "0" ? ethers.formatEther(storageCostEth) : "0"
+        costWei: storageCostWei,
+        costEth: storageCostWei !== "0" ? ethers.formatEther(storageCostWei) : "0"
       }
     };
 
