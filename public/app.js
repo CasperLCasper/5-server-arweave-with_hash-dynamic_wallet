@@ -310,7 +310,7 @@ const App = Object.assign({}, AppState, {
       const totalPriceEth = ethers.formatEther(txValue);
       const mintPriceEth = mintData.priceBreakdown 
         ? ethers.formatEther(mintData.priceBreakdown.mintPrice) 
-        : "0";
+        : "0.00168";
       const storageCostEthFormatted = mintData.priceBreakdown?.storageCost 
         ? ethers.formatEther(mintData.priceBreakdown.storageCost) 
         : storageCostEth || "0";
@@ -372,7 +372,7 @@ const App = Object.assign({}, AppState, {
       const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
-        `Price: ${totalPriceEth} ETH\n` +
+        `Total: ${totalPriceEth} ETH\n` +
         `(Mint: ${mintPriceEth} + Storage: ${storageCostEthFormatted})\n\n` +
         `🔐 Image Hash: ${imageHash}\n` +
         `${videoHash ? '🔐 Video Hash: ' + videoHash + '\n' : ''}` +
@@ -424,8 +424,8 @@ const App = Object.assign({}, AppState, {
     if (UI.generateNFTBtn) {
       UI.generateNFTBtn.disabled = false;
       const price = await getNFTPrice();
-      // Uz pogas rāda: mint cena + storage + gas (vispārīgi)
-      UI.generateNFTBtn.setAttribute('data-price', `${price} + storage + gas`);
+      // Uz pogas: tikai mint cena + storage (bez gas)
+      UI.generateNFTBtn.setAttribute('data-price', `${price.replace(' + gas', '')} + storage`);
     }
   },
 
