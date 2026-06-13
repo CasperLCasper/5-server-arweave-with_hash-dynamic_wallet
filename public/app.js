@@ -125,17 +125,14 @@ const App = Object.assign({}, AppState, {
     
     setButtonLoading(UI.generateNFTBtn, true);
     
-    // ==========================================
-    // 0. SOLIS: ANTI-BOT — LIETOTĀJS PARAKSTA
-    // ==========================================
     try {
+      // 0. ANTI-BOT
       showToast('✍️ Sign to continue...', 'info');
       
       const antiBotMessage = `Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${this.account}`;
       
       try {
         await this.signer.signMessage(antiBotMessage);
-        console.log('✅ Anti-bot signature verified');
       } catch (signError) {
         if (signError.message?.includes('User denied') || signError.code === 'ACTION_REJECTED') {
           showToast('🛑 Cancelled by user', 'warning');
@@ -146,9 +143,7 @@ const App = Object.assign({}, AppState, {
         return;
       }
       
-      // ==========================================
-      // 1. SOLIS: UZŅEM ATTĒLU UN VIDEO LOKĀLI
-      // ==========================================
+      // 1. UZŅEM ATTĒLU UN VIDEO
       showToast('📸 Creating your NFT assets...', 'info');
       
       const imageBlob = await new Promise((resolve, reject) => {
@@ -193,9 +188,7 @@ const App = Object.assign({}, AppState, {
         showToast('🎬 Video failed, continuing without video', 'warning');
       }
       
-      // ==========================================
-      // 2. SOLIS: AUGŠUPIELĀDĒ ARWEAVE
-      // ==========================================
+      // 2. AUGŠUPIELĀDĒ ARWEAVE
       showToast('📤 Uploading to Arweave (Turbo)...', 'info');
       
       const nftFormData = new FormData();
@@ -224,6 +217,7 @@ const App = Object.assign({}, AppState, {
       const gw = ARWEAVE_GATEWAY;
       const imageUrl = serverData.image.id ? `${gw}${serverData.image.id}` : `local://${imageHash}`;
       const arweaveSuccess = serverData.arweave?.success || false;
+      const storageCostWei = serverData.storage?.costWei || "0";
       
       const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
       const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
@@ -254,12 +248,9 @@ const App = Object.assign({}, AppState, {
         showToast('✅ Metadata uploaded to Arweave!', 'success');
       } catch (metaError) {
         console.warn('Metadata upload failed:', metaError);
-        showToast('⚠️ Metadata upload failed, continuing anyway', 'warning');
       }
       
-      // ==========================================
-      // 3. SOLIS: PĀRSLĒDZAS UZ BASE SEPOLIA
-      // ==========================================
+      // 3. PĀRSLĒDZAS UZ BASE SEPOLIA
       showToast('🔄 Switching to Base Sepolia network for minting...', 'info');
       await switchToMintChain();
       
@@ -289,15 +280,17 @@ const App = Object.assign({}, AppState, {
           const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
           const priceWei = await contract.mintPrice();
           const mintPriceEth = ethers.formatEther(priceWei);
-          UI.generateNFTBtn.setAttribute('data-price', `${mintPriceEth} ETH + gas`);
+          
+          // Parāda kopējo cenu (mint + storage)
+          const totalPriceWei = priceWei + BigInt(storageCostWei);
+          const totalPriceEth = ethers.formatEther(totalPriceWei);
+          UI.generateNFTBtn.setAttribute('data-price', `${totalPriceEth} ETH + gas`);
         } catch(e) {
           console.warn("Could not fetch price on mint chain:", e);
         }
       }
       
-      // ==========================================
-      // 4. SOLIS: IEGŪST MINTĒŠANAS DATUS
-      // ==========================================
+      // 4. IEGŪST MINTĒŠANAS DATUS AR STORAGE MAKSU
       showToast('📝 Preparing mint...', 'info');
       
       const metadataUri = metaId 
@@ -314,7 +307,8 @@ const App = Object.assign({}, AppState, {
             wallet: this.account,
             metadataUri: metadataUri,
             imageHash: imageHash,
-            videoHash: videoHash || null
+            videoHash: videoHash || null,
+            storageCostWei: storageCostWei
           })
         });
         mintData = await mintRes.json();
@@ -325,9 +319,7 @@ const App = Object.assign({}, AppState, {
       
       if (!mintData.success) throw new Error(mintData.error || 'Mint preparation failed');
       
-      // ==========================================
-      // 5. SOLIS: LIETOTĀJS PARAKSTA UN APMAKSĀ
-      // ==========================================
+      // 5. LIETOTĀJS PARAKSTA UN APMAKSĀ
       const txValue = BigInt(mintData.transaction.value);
       const txGasLimit = BigInt(mintData.transaction.gasLimit);
       
@@ -335,7 +327,8 @@ const App = Object.assign({}, AppState, {
         to: mintData.transaction.to,
         valueWei: txValue.toString(),
         valueEth: ethers.formatEther(txValue),
-        gasLimit: txGasLimit.toString()
+        gasLimit: txGasLimit.toString(),
+        breakdown: mintData.priceBreakdown
       });
 
       showToast('✍️ Please sign the transaction in your wallet...', 'info');
@@ -350,27 +343,21 @@ const App = Object.assign({}, AppState, {
       await tx.wait();
       showToast('✅ NFT minted!', 'success');
       
-      // ==========================================
-      // 6. SOLIS: WEBHOOK — AUTOMĀTISKI PĒRK KREDĪTUS
-      // ==========================================
+      // 6. WEBHOOK
       try {
-        console.log('🔔 Calling webhook to buy credits...');
         await fetch('/api/buy-credits-webhook', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             txHash: tx.hash,
-            ethAmount: txValue.toString()
+            ethAmount: storageCostWei
           })
         });
-        console.log('✅ Webhook called successfully');
       } catch (webhookError) {
-        console.warn('⚠️ Webhook call failed (non-critical):', webhookError.message);
+        console.warn('⚠️ Webhook failed:', webhookError.message);
       }
       
-      // ==========================================
-      // 7. SOLIS: SAGLABĀ ZIP
-      // ==========================================
+      // 7. ZIP
       const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
       const metadataFileName = `metadata_${Date.now()}.json`;
       
@@ -386,13 +373,12 @@ const App = Object.assign({}, AppState, {
       await downloadAllFiles(completeFiles);
       showToast('✅ All files saved as ZIP!', 'success');
       
-      // ==========================================
-      // 8. SOLIS: PARĀDA REZULTĀTU
-      // ==========================================
+      // 8. REZULTĀTS
       const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
-        `Price: ${ethers.formatEther(txValue)} ETH\n\n` +
+        `Price: ${ethers.formatEther(txValue)} ETH\n` +
+        `(Mint: ${ethers.formatEther(mintData.priceBreakdown?.mintPrice || 0)} + Storage: ${ethers.formatEther(mintData.priceBreakdown?.storageCost || 0)})\n\n` +
         `🔐 Image Hash: ${imageHash}\n` +
         `${videoHash ? '🔐 Video Hash: ' + videoHash + '\n' : ''}` +
         `${metaId ? '📄 Arweave Metadata: ' + metaId + '\n' : ''}` +
@@ -401,9 +387,7 @@ const App = Object.assign({}, AppState, {
         `\n${arweaveStatus} Arweave: ${arweaveSuccess ? 'OK' : 'Failed (files saved locally)'}` +
         `\n\n💾 All files saved as nft_assets_*.zip`);
       
-      // ==========================================
-      // 9. SOLIS: ATJAUNO VIZUALIZĀCIJU
-      // ==========================================
+      // 9. ATJAUNO VIZUALIZĀCIJU
       showToast('🔄 Restoring visualization...', 'info');
       await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
       await new Promise(resolve => setTimeout(resolve, 500));
