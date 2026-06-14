@@ -274,7 +274,20 @@ const App = Object.assign({}, AppState, {
         return;
       }
       
-      // 4. IEGŪST MINTĒŠANAS DATUS AR STORAGE MAKSU
+      const contractAddress = await getContractAddress();
+      if (contractAddress) {
+        try {
+          const stableProvider = await getMintProvider();
+          const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
+          const priceWei = await contract.mintPrice();
+          const mintPriceEth = ethers.formatEther(priceWei);
+          UI.generateNFTBtn.setAttribute('data-price', `${mintPriceEth} ETH + Arweave storage`);
+        } catch(e) {
+          console.warn("Could not fetch price on mint chain:", e);
+        }
+      }
+      
+      // 4. IEGŪST MINTĒŠANAS DATUS
       showToast('📝 Preparing mint...', 'info');
       
       const metadataUri = metaId 
@@ -291,8 +304,7 @@ const App = Object.assign({}, AppState, {
             wallet: this.account,
             metadataUri: metadataUri,
             imageHash: imageHash,
-            videoHash: videoHash || null,
-            storageCostWei: storageCostWei
+            videoHash: videoHash || null
           })
         });
         mintData = await mintRes.json();
@@ -303,28 +315,17 @@ const App = Object.assign({}, AppState, {
       
       if (!mintData.success) throw new Error(mintData.error || 'Mint preparation failed');
       
-      // 5. PARĀDA GALĪGO CENU UN PRASA PARAKSTĪT
+      // 5. LIETOTĀJS PARAKSTA UN APMAKSĀ (tikai mintPrice)
       const txValue = BigInt(mintData.transaction.value);
       const txGasLimit = BigInt(mintData.transaction.gasLimit);
-      
-      const totalPriceEth = ethers.formatEther(txValue);
-      const mintPriceEth = mintData.priceBreakdown 
-        ? ethers.formatEther(mintData.priceBreakdown.mintPrice) 
-        : "0.00168";
-      const storageCostEthFormatted = mintData.priceBreakdown?.storageCost 
-        ? ethers.formatEther(mintData.priceBreakdown.storageCost) 
-        : storageCostEth || "0";
       
       console.log('📤 Sending mint transaction:', {
         to: mintData.transaction.to,
         valueWei: txValue.toString(),
-        valueEth: totalPriceEth,
-        gasLimit: txGasLimit.toString(),
-        breakdown: mintData.priceBreakdown
+        valueEth: ethers.formatEther(txValue),
+        gasLimit: txGasLimit.toString()
       });
 
-      showToast(`💰 Total: ${totalPriceEth} ETH (Mint: ${mintPriceEth} + Storage: ${storageCostEthFormatted}) + gas`, 'info');
-      
       showToast('✍️ Please sign the transaction in your wallet...', 'info');
       const tx = await this.signer.sendTransaction({
         to: mintData.transaction.to,
@@ -337,18 +338,20 @@ const App = Object.assign({}, AppState, {
       await tx.wait();
       showToast('✅ NFT minted!', 'success');
       
-      // 6. WEBHOOK
+      // 6. IZSAUC ROBOTU — withdraw + kredītu pirkšana
       try {
-        await fetch('/api/buy-credits-webhook', {
+        console.log('🤖 Calling robot to withdraw and buy credits...');
+        await fetch('/api/robot-withdraw-and-buy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             txHash: tx.hash,
-            ethAmount: storageCostWei
+            storageCostWei: storageCostWei
           })
         });
-      } catch (webhookError) {
-        console.warn('⚠️ Webhook failed:', webhookError.message);
+        console.log('✅ Robot finished');
+      } catch (robotError) {
+        console.warn('⚠️ Robot failed (non-critical):', robotError.message);
       }
       
       // 7. ZIP
@@ -371,8 +374,8 @@ const App = Object.assign({}, AppState, {
       const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
       alert(`✅ NFT minted!\n\n` +
         `Tx: ${tx.hash}\n` +
-        `Total: ${totalPriceEth} ETH\n` +
-        `(Mint: ${mintPriceEth} + Storage: ${storageCostEthFormatted})\n\n` +
+        `Price: ${ethers.formatEther(txValue)} ETH\n` +
+        `(Storage: ${storageCostEth} ETH)\n\n` +
         `🔐 Image Hash: ${imageHash}\n` +
         `${videoHash ? '🔐 Video Hash: ' + videoHash + '\n' : ''}` +
         `${metaId ? '📄 Arweave Metadata: ' + metaId + '\n' : ''}` +
