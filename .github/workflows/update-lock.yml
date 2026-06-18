@@ -1,7 +1,9 @@
 name: Update package-lock.json
 
 on:
-  workflow_dispatch:   # ļauj manuāli palaist no GitHub Actions paneļa
+  workflow_dispatch:   # Ļauj jebkurā brīdī palaist manuāli ar pogu
+  schedule:
+    - cron: '0 0 * * 1'  # Automātiski palaidīsies katru pirmdienas rītu (00:00 UTC)
 
 permissions:
   contents: write
@@ -10,15 +12,23 @@ jobs:
   update-lock:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Nomainīts uz v5, lai nebūtu Deprecation brīdinājumu
+      - uses: actions/checkout@v5
+      
+      # Nomainīts uz v5, lai nodrošinātu pilnu Node 24 atbalstu uz GitHub serveriem
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          
       - run: npm install
+      
+      # Šī rindiņa piespiež nodzēst ievainojamības un pārrakstīt package-lock.json
+      - run: npm audit fix --force || echo "Salabots viss, ko varēja"
+      
       - name: Commit & Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json
-          git commit -m "Update package-lock.json with safe ws" || echo "No changes to commit"
+          git commit -m "Update package-lock.json with safe ws and audit fix" || echo "No changes to commit"
           git push
