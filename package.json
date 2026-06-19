@@ -9,7 +9,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@ardrive/turbo-sdk": "^1.13.0",
+    "@ardrive/turbo-sdk": "^1.28.3",
     "@upstash/redis": "^1.28.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
