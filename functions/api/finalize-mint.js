@@ -11,13 +11,80 @@ const WALLET_NFT_ABI = [
   "function mintPrice() public view returns (uint256)"
 ];
 
+/**
+ * Palīgfunkcija: Normalizē un formatē metadatu URI adreses (Samazina sarežģītību)
+ */
+function formatMetadataUri(uri) {
+  const trimmed = uri.trim();
+  if (trimmed.startsWith('Qm') || trimmed.startsWith('baf')) {
+    return `https://arweave.net/${trimmed}`;
+  }
+  if (trimmed.startsWith('ipfs://')) {
+    return `https://arweave.net/${trimmed.substring(7)}`;
+  }
+  if (trimmed.startsWith('ar://')) {
+    return `https://arweave.net/${trimmed.substring(5)}`;
+  }
+  return trimmed;
+}
+
+/**
+ * Palīgfunkcija: Iepērk Arweave/Turbo glabātuves kredītus (Samazina sarežģītību)
+ */
+async function purchaseStorageCredits(provider, storageKey, costWei) {
+  if (!storageKey || !costWei) return;
+
+  try {
+    const storageWallet = new ethers.Wallet(storageKey, provider);
+    const storageAddress = await storageWallet.getAddress();
+    const storageBalance = await provider.getBalance(storageAddress);
+    
+    console.log(`🤖 Webhook robot: storage balance: ${ethers.formatEther(storageBalance)} ETH`);
+
+    const storageCostBigInt = BigInt(costWei);
+    const gasReserve = ethers.parseEther("0.0001");
+    
+    if (storageBalance < storageCostBigInt + gasReserve) {
+      console.log(`🤖 Webhook robot: not enough funds for credits.`);
+      return;
+    }
+
+    console.log(`🤖 Webhook robot: buying credits for ${ethers.formatEther(costWei)} ETH...`);
+    
+    const signer = new EthereumSigner(storageKey);
+    const turbo = TurboFactory.authenticated({
+      signer,
+      token: 'base-eth',
+      gatewayUrl: 'https://sepolia.base.org',
+      paymentServiceConfig: { url: 'https://payment.ardrive.dev' },
+      uploadServiceConfig: { url: 'https://upload.ardrive.dev' }
+    });
+
+    const { winc: before } = await turbo.getBalance();
+    await turbo.topUpWithTokens({ tokenAmount: costWei });
+    const { winc: after } = await turbo.getBalance();
+    
+    console.log('🤖 Webhook robot: ✅ Credits purchased!', {
+      ethSpent: ethers.formatEther(costWei),
+      creditsBefore: before.toString(),
+      creditsAfter: after.toString(),
+      added: (after - before).toString()
+    });
+  } catch (creditError) {
+    console.warn('⚠️ Credit purchase failed:', creditError.message);
+  }
+}
+
+// 🎯 GALVENĀ FUNKCIJA (Cognitive Complexity: ~10 no 15)
 export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
     const user = await requireAuth(request, env);
     if (user instanceof Response) return user;
-    if (!user || !user.address) {
+    
+    // 💡 LABOJUMS: Izmantojam optional chaining (?.) vienkāršākai lasāmībai
+    if (!user?.address) {
       return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
         status: 401, headers: { "Content-Type": "application/json" }
       });
@@ -34,6 +101,8 @@ export async function onRequestPost(context) {
     try {
       body = await request.json();
     } catch (e) {
+      // 💡 LABOJUMS: Apstrādājam kļūdu (exception), nevis atstājam catch bloku tukšu
+      console.warn('⚠️ Neizdevās parsēt JSON pieprasījumu:', e.message);
       return new Response(JSON.stringify({ success: false, error: 'Invalid JSON' }), {
         status: 400, headers: { "Content-Type": "application/json" }
       });
@@ -56,17 +125,7 @@ export async function onRequestPost(context) {
       ? contentHash
       : ethers.ZeroHash;
 
-    let fullMetadataUri = metadataUri.trim();
-    
-    if (fullMetadataUri.startsWith('Qm') || fullMetadataUri.startsWith('baf')) {
-      fullMetadataUri = `https://arweave.net/${fullMetadataUri}`;
-    } else if (fullMetadataUri.startsWith('ipfs://')) {
-      const cid = fullMetadataUri.substring(7);
-      fullMetadataUri = `https://arweave.net/${cid}`;
-    } else if (fullMetadataUri.startsWith('ar://')) {
-      const txId = fullMetadataUri.substring(5);
-      fullMetadataUri = `https://arweave.net/${txId}`;
-    }
+    const fullMetadataUri = formatMetadataUri(metadataUri);
 
     const CONTRACT_ADDRESS = env.CONTRACT_ADDRESS;
     const ROBOT_PRIVATE_KEY = env.ROBOT_PRIVATE_KEY;
@@ -80,9 +139,8 @@ export async function onRequestPost(context) {
     }
 
     const provider = new ethers.JsonRpcProvider(ALCHEMY_RPC_URL);
-    
-    // 1. Pārbauda, vai lietotājam ir aktīvs PendingMint
     const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, provider);
+    
     let pendingMint;
     try {
       pendingMint = await contract.getPendingMint(wallet);
@@ -92,25 +150,23 @@ export async function onRequestPost(context) {
       });
     }
 
-    if (!pendingMint || !pendingMint.exists) {
+    // 💡 LABOJUMS: Izmantojam optional chaining (?.) vienkāršākai lasāmībai
+    if (!pendingMint?.exists) {
       return new Response(JSON.stringify({ success: false, error: 'No pending mint found for this wallet' }), {
         status: 400, headers: { "Content-Type": "application/json" }
       });
     }
 
-    console.log('🔍 FINALIZE MINT DEBUG:');
-    console.log('  User wallet:', wallet);
-    console.log('  Metadata URI:', fullMetadataUri);
-    console.log('  Storage cost (ETH):', ethers.formatEther(storageCostWei || "0"));
-    console.log('  Content Hash:', finalContentHash);
-    console.log('  Pending deposit:', ethers.formatEther(pendingMint.deposit));
+    console.log('🔍 FINALIZE MINT DEBUG:', {
+      wallet,
+      metadataUri: fullMetadataUri,
+      storageCostEth: ethers.formatEther(storageCostWei || "0"),
+      contentHash: finalContentHash,
+      deposit: ethers.formatEther(pendingMint.deposit)
+    });
 
-    // 2. Izsauc finalizeMint ar ROBOT_PRIVATE_KEY (owner)
     const robotWallet = new ethers.Wallet(ROBOT_PRIVATE_KEY, provider);
-    const robotAddress = await robotWallet.getAddress();
     const contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotWallet);
-    
-    console.log(`🤖 Finalize robot (${robotAddress}): calling finalizeMint...`);
     
     try {
       const finalizeTx = await contractWithSigner.finalizeMint(
@@ -119,9 +175,8 @@ export async function onRequestPost(context) {
         storageCostWei || 0, 
         finalContentHash
       );
-      console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
       await finalizeTx.wait();
-      console.log('🤖 ✅ Mint finalized! NFT created with metadata URI and content hash.');
+      console.log(`🤖 ✅ Mint finalized! Tx Hash: ${finalizeTx.hash}`);
     } catch (finalizeError) {
       console.error('❌ Finalize failed:', finalizeError.message);
       return new Response(JSON.stringify({ success: false, error: 'Finalize failed: ' + finalizeError.message }), {
@@ -129,51 +184,12 @@ export async function onRequestPost(context) {
       });
     }
 
-    // 3. Pērk kredītus no storage maka
-    if (ARWEAVE_STORAGE_KEY && storageCostWei) {
-      try {
-        const storageWallet = new ethers.Wallet(ARWEAVE_STORAGE_KEY, provider);
-        const storageAddress = await storageWallet.getAddress();
-        const storageBalance = await provider.getBalance(storageAddress);
-        
-        console.log(`🤖 Webhook robot: storage balance: ${ethers.formatEther(storageBalance)} ETH`);
-
-        const storageCostBigInt = BigInt(storageCostWei);
-        const gasReserve = ethers.parseEther("0.0001");
-        
-        if (storageBalance >= storageCostBigInt + gasReserve) {
-          console.log(`🤖 Webhook robot: buying credits for ${ethers.formatEther(storageCostWei)} ETH...`);
-          
-          const signer = new EthereumSigner(ARWEAVE_STORAGE_KEY);
-          const turbo = TurboFactory.authenticated({
-            signer,
-            token: 'base-eth',
-            gatewayUrl: 'https://sepolia.base.org',
-            paymentServiceConfig: { url: 'https://payment.ardrive.dev' },
-            uploadServiceConfig: { url: 'https://upload.ardrive.dev' }
-          });
-
-          const { winc: before } = await turbo.getBalance();
-          await turbo.topUpWithTokens({ tokenAmount: storageCostWei });
-          const { winc: after } = await turbo.getBalance();
-          
-          console.log('🤖 Webhook robot: ✅ Credits purchased!', {
-            ethSpent: ethers.formatEther(storageCostWei),
-            creditsBefore: before.toString(),
-            creditsAfter: after.toString(),
-            added: (after - before).toString()
-          });
-        } else {
-          console.log(`🤖 Webhook robot: not enough funds for credits.`);
-        }
-      } catch (creditError) {
-        console.warn('⚠️ Credit purchase failed:', creditError.message);
-      }
-    }
+    // 💡 LABOJUMS: Iznesam lielo kredītu pirkšanas bloku palīgfunkcijā lineāram koda tecējumam
+    await purchaseStorageCredits(provider, ARWEAVE_STORAGE_KEY, storageCostWei);
 
     return new Response(JSON.stringify({
       success: true,
-      wallet: wallet,
+      wallet,
       metadataUri: fullMetadataUri,
       storageCostWei: storageCostWei || "0",
       contentHash: finalContentHash
