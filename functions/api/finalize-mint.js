@@ -12,26 +12,24 @@ const WALLET_NFT_ABI = [
 ];
 
 /**
- * Palīgfunkcija: Normalizē un formatē metadatu URI adreses TIKAI tad, ja tā ir tīra saite
+ * Palīgfunkcija: Izpilda līguma finalizeMint darījumu tīkla pusē (Samazina sarežģītību)
  */
-function formatMetadataUri(uri) {
-  const trimmed = uri.trim();
+async function executeRobotFinalize(provider, robotPrivateKey, contractAddress, { wallet, fullMetadataUri, storageCostWei, finalContentHash }) {
+  const robotWallet = new ethers.Wallet(robotPrivateKey, provider);
+  const robotAddress = await robotWallet.getAddress();
+  const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, robotWallet);
   
-  // 🛡️ DROŠĪBAS PĀRBAUDE: Ja tas ir jēls JSON (satur {} vai ir pārāk garš), atgriežam kā ir!
-  if (trimmed.startsWith('{') || trimmed.length > 150 || trimmed.includes('\n')) {
-    return trimmed;
-  }
-
-  if (trimmed.startsWith('Qm') || trimmed.startsWith('baf')) {
-    return `https://arweave.net/${trimmed}`;
-  }
-  if (trimmed.startsWith('ipfs://')) {
-    return `https://arweave.net/${trimmed.substring(7)}`;
-  }
-  if (trimmed.startsWith('ar://')) {
-    return `https://arweave.net/${trimmed.substring(5)}`;
-  }
-  return trimmed;
+  console.log(`🤖 Finalize robot (${robotAddress}): calling finalizeMint...`);
+  
+  const finalizeTx = await contractWithSigner.finalizeMint(
+    wallet, 
+    fullMetadataUri, 
+    storageCostWei || 0, 
+    finalContentHash
+  );
+  console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
+  await finalizeTx.wait();
+  console.log('🤖 ✅ Mint finalized! NFT created with metadata URI and content hash.');
 }
 
 /**
@@ -81,7 +79,7 @@ async function purchaseStorageCredits(provider, storageKey, costWei) {
   }
 }
 
-// 🎯 GALVENĀ FUNKCIJA (Cognitive Complexity: ~10 no 15)
+// 🎯 GALVENĀ FUNKCIJA (Cognitive Complexity: ~12 no 15)
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -129,8 +127,15 @@ export async function onRequestPost(context) {
       ? contentHash
       : ethers.ZeroHash;
 
-    // 🛡️ Tagad šeit tiks saglabāts pilnais JSON saturs bez datu zaudēšanas!
-    const fullMetadataUri = formatMetadataUri(metadataUri);
+    // 🛑 ORIĢINĀLĀ LOĢIKA: Atgriežam tieši tavu veco stringu apstrādi bez jebkādām izmaiņām!
+    let fullMetadataUri = metadataUri.trim();
+    if (fullMetadataUri.startsWith('Qm') || fullMetadataUri.startsWith('baf')) {
+      fullMetadataUri = `https://arweave.net/${fullMetadataUri}`;
+    } else if (fullMetadataUri.startsWith('ipfs://')) {
+      fullMetadataUri = `https://arweave.net/${fullMetadataUri.substring(7)}`;
+    } else if (fullMetadataUri.startsWith('ar://')) {
+      fullMetadataUri = `https://arweave.net/${fullMetadataUri.substring(5)}`;
+    }
 
     const CONTRACT_ADDRESS = env.CONTRACT_ADDRESS;
     const ROBOT_PRIVATE_KEY = env.ROBOT_PRIVATE_KEY;
@@ -163,23 +168,17 @@ export async function onRequestPost(context) {
 
     console.log('🔍 FINALIZE MINT DEBUG:', {
       wallet,
+      metadataUri: fullMetadataUri,
       storageCostEth: ethers.formatEther(storageCostWei || "0"),
       contentHash: finalContentHash,
       deposit: ethers.formatEther(pendingMint.deposit)
     });
 
-    const robotWallet = new ethers.Wallet(ROBOT_PRIVATE_KEY, provider);
-    const contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotWallet);
-    
+    // 🚀 Izsaucam atsevišķo funkciju līguma rakstīšanai
     try {
-      const finalizeTx = await contractWithSigner.finalizeMint(
-        wallet, 
-        fullMetadataUri, 
-        storageCostWei || 0, 
-        finalContentHash
-      );
-      await finalizeTx.wait();
-      console.log(`🤖 ✅ Mint finalized! Tx Hash: ${finalizeTx.hash}`);
+      await executeRobotFinalize(provider, ROBOT_PRIVATE_KEY, CONTRACT_ADDRESS, {
+        wallet, fullMetadataUri, storageCostWei, finalContentHash
+      });
     } catch (finalizeError) {
       console.error('❌ Finalize failed:', finalizeError.message);
       return new Response(JSON.stringify({ success: false, error: 'Finalize failed: ' + finalizeError.message }), {
