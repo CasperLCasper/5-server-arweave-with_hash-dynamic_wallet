@@ -12,23 +12,37 @@ jobs:
   update-lock:
     runs-on: ubuntu-latest
     steps:
-      # Nomainīts uz v5, lai nebūtu Deprecation brīdinājumu
+      # Izmantojam jaunāko checkout versiju
       - uses: actions/checkout@v5
       
-      # Nomainīts uz v5, lai nodrošinātu pilnu Node 24 atbalstu uz GitHub serveriem
+      # Nodrošinām Node.js vidi
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
           
-      - run: npm install
+      # 🚀 LABOJUMS 1: Izpildām npm update, kas ignorē veco lock failu un reāli atvelk jaunākās versijas
+      - name: Update dependencies and rewrite package-lock
+        run: npm update
+
+      # Šī rindiņa piespiež nodzēst papildus ievainojamības, ja tādas palikušas
+      - name: Run npm audit fix
+        run: npm audit fix --force || echo "Salabots viss, ko varēja"
       
-      # Šī rindiņa piespiež nodzēst ievainojamības un pārrakstīt package-lock.json
-      - run: npm audit fix --force || echo "Salabots viss, ko varēja"
-      
-      - name: Commit & Push
+      # 🚀 LABOJUMS 2: Sakārtots Commit & Push ar [skip ci] un zaru noteikšanu
+      - name: Commit & Push updated package-lock.json
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "Update package-lock.json with safe ws and audit fix" || echo "No changes to commit"
-          git push
+          # Pārbaudām, vai fails vispār ir mainījies, lai netaisītu tukšus commitus
+          if git diff --exit-code package-lock.json; then
+            echo "Nav jaunu versiju, package-lock.json nav mainījies."
+          else
+            echo "Atrasti atjauninājumi! Veicam saglabāšanu..."
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            
+            # Pievienojam [skip ci], lai Action neieietu bezgalīgā cilpā
+            git commit -m "chore: auto-update package-lock.json [skip ci]"
+            
+            # Drošs push uz pašreizējo aktīvo zaru
+            git push origin HEAD:${{ github.ref_name }}
+          fi
