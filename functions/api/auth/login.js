@@ -1,4 +1,4 @@
-import crypto from "crypto"; // <-- LABOTS: Importējam un inicializējam crypto Node.js videi
+// functions/api/auth/login.js
 import { verifySignature, createToken } from "../../_lib/auth.js";
 import { jwtVerify } from "jose";
 
@@ -26,6 +26,8 @@ export default async function handler(req, res) {
       const { payload } = await jwtVerify(nonceToken, secret);
       nonce = payload.nonce;
     } catch (e) {
+      // 💡 LABOJUMS: Apstrādājam kļūdu, piefiksējot to žurnālā, lai catch nav tukšs
+      console.warn("⚠️ Nonce JWT validācijas kļūda:", e.message);
       return res.status(401).json({ error: "Nonce expired or invalid. Request a new one." });
     }
 
@@ -33,13 +35,13 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Invalid nonce" });
     }
 
-    // Verificējam maka parakstu (Šeit iekšā auth.js tika meklēts crypto objekts)
+    // Verificējam maka parakstu
     const isValid = verifySignature(address, message, signature);
     if (!isValid) {
       return res.status(401).json({ error: "Invalid signature" });
     }
 
-    // Izveidojam lietotāja JWT (Nododam process.env, ja createToken to sagaida)
+    // Izveidojam lietotāja JWT
     const token = await createToken(address, process.env);
 
     return res.status(200).json({ token });
