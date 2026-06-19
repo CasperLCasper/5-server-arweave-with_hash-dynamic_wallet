@@ -12,10 +12,16 @@ const WALLET_NFT_ABI = [
 ];
 
 /**
- * Palīgfunkcija: Normalizē un formatē metadatu URI adreses (Samazina sarežģītību)
+ * Palīgfunkcija: Normalizē un formatē metadatu URI adreses TIKAI tad, ja tā ir tīra saite
  */
 function formatMetadataUri(uri) {
   const trimmed = uri.trim();
+  
+  // 🛡️ DROŠĪBAS PĀRBAUDE: Ja tas ir jēls JSON (satur {} vai ir pārāk garš), atgriežam kā ir!
+  if (trimmed.startsWith('{') || trimmed.length > 150 || trimmed.includes('\n')) {
+    return trimmed;
+  }
+
   if (trimmed.startsWith('Qm') || trimmed.startsWith('baf')) {
     return `https://arweave.net/${trimmed}`;
   }
@@ -29,7 +35,7 @@ function formatMetadataUri(uri) {
 }
 
 /**
- * Palīgfunkcija: Iepērk Arweave/Turbo glabātuves kredītus (Samazina sarežģītību)
+ * Palīgfunkcija: Iepērk Arweave/Turbo glabātuves kredītus
  */
 async function purchaseStorageCredits(provider, storageKey, costWei) {
   if (!storageKey || !costWei) return;
@@ -83,7 +89,6 @@ export async function onRequestPost(context) {
     const user = await requireAuth(request, env);
     if (user instanceof Response) return user;
     
-    // 💡 LABOJUMS: Izmantojam optional chaining (?.) vienkāršākai lasāmībai
     if (!user?.address) {
       return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
         status: 401, headers: { "Content-Type": "application/json" }
@@ -101,7 +106,6 @@ export async function onRequestPost(context) {
     try {
       body = await request.json();
     } catch (e) {
-      // 💡 LABOJUMS: Apstrādājam kļūdu (exception), nevis atstājam catch bloku tukšu
       console.warn('⚠️ Neizdevās parsēt JSON pieprasījumu:', e.message);
       return new Response(JSON.stringify({ success: false, error: 'Invalid JSON' }), {
         status: 400, headers: { "Content-Type": "application/json" }
@@ -125,6 +129,7 @@ export async function onRequestPost(context) {
       ? contentHash
       : ethers.ZeroHash;
 
+    // 🛡️ Tagad šeit tiks saglabāts pilnais JSON saturs bez datu zaudēšanas!
     const fullMetadataUri = formatMetadataUri(metadataUri);
 
     const CONTRACT_ADDRESS = env.CONTRACT_ADDRESS;
@@ -150,7 +155,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // 💡 LABOJUMS: Izmantojam optional chaining (?.) vienkāršākai lasāmībai
     if (!pendingMint?.exists) {
       return new Response(JSON.stringify({ success: false, error: 'No pending mint found for this wallet' }), {
         status: 400, headers: { "Content-Type": "application/json" }
@@ -159,7 +163,6 @@ export async function onRequestPost(context) {
 
     console.log('🔍 FINALIZE MINT DEBUG:', {
       wallet,
-      metadataUri: fullMetadataUri,
       storageCostEth: ethers.formatEther(storageCostWei || "0"),
       contentHash: finalContentHash,
       deposit: ethers.formatEther(pendingMint.deposit)
@@ -184,7 +187,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // 💡 LABOJUMS: Iznesam lielo kredītu pirkšanas bloku palīgfunkcijā lineāram koda tecējumam
     await purchaseStorageCredits(provider, ARWEAVE_STORAGE_KEY, storageCostWei);
 
     return new Response(JSON.stringify({
