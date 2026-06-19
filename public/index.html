@@ -7,7 +7,6 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" crossorigin="anonymous" />
   <link rel="stylesheet" href="/style.css" />
-  <!-- Ievietots drošais JSZip skripts ar integritātes pārbaudi -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-9a997d91e6b91c95b6c9867c29e7c3b28b26e0e7bc2374e64f8de2e9b0bfacbb" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -29,7 +28,14 @@
       <button class="theme-btn theme-fire" data-theme="fire">🔥 FIRE</button>
     </div>
     <div class="chain-selector">
-      <div class="chain-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Blockchain</span></div>
+      <div class="chain-label">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="2" y1="12" x2="22" y2="12"/>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </svg>
+        <label for="chainSelect">Blockchain</label>
+      </div>
       <select id="chainSelect" class="chain-dropdown">
         <optgroup label="🪙 Testnet">
           <option value="sepolia" data-icon="🔷">🔷 Ethereum Sepolia</option>
