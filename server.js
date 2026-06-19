@@ -18,72 +18,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-// --- GLOBĀLAIS SLODZES TESTA PĀRTVERĒJS (MIDDLEWARE) ---
-// Tas pārtver pieprasījumus pirms jebkādas validācijas vai maršrutēšanas
-app.use((req, res, next) => {
-    const isLoadTest = req.headers['x-load-test'] === 'true';
-    
-    if (isLoadTest) {
-        const urlPath = req.path.toLowerCase();
-
-        // 1. Plūsma: Autentifikācija un kredīti
-        if (urlPath.includes('nonce')) {
-            return res.json({ success: true, nonce: "mock_nonce_123456" });
-        }
-        if (urlPath.includes('login')) {
-            return res.json({ success: true, token: "mock_load_test_jwt_token" });
-        }
-        if (urlPath.includes('check-credits') || urlPath.includes('checkcredits')) {
-            return res.json({ success: true, credits: 100 });
-        }
-        if (urlPath.includes('gettokens')) {
-            return res.json({ success: true, tokens: [] });
-        }
-
-        // 2. Plūsma: NFT skatīšanās un pārbaude
-        if (urlPath.includes('getcontractaddress')) {
-            return res.json({ success: true, address: "0x1234567890123456789012345678901234567890" });
-        }
-        if (urlPath.includes('getallnfts')) {
-            return res.json({ success: true, nfts: [] });
-        }
-        if (urlPath.includes('verify')) {
-            return res.json({ success: true, verified: true });
-        }
-
-        // 3. Plūsma: Mintēšanas process un fona roboti
-        if (urlPath.includes('uploadfiletoarweave') || urlPath.includes('uploadmetadatatoarweave')) {
-            return res.json({ success: true, url: "https://arweave.net/mock_arweave_hash_123" });
-        }
-        if (urlPath.includes('prepare-nft') || urlPath.includes('preparenft')) {
-            return res.json({ success: true, prepared: true });
-        }
-        if (urlPath.includes('request-mint') || urlPath.includes('requestmint')) {
-            return res.json({ success: true, allowed: true });
-        }
-        if (urlPath.includes('mint-with-signature') || urlPath.includes('mintwithsignature')) {
-            return res.json({ success: true, mintTx: "0x_mock_mint_tx_success" });
-        }
-        if (urlPath.includes('finalize-mint') || urlPath.includes('finalizemint')) {
-            return res.json({ success: true, success: true });
-        }
-        if (urlPath.includes('robot-withdraw-and-buy') || urlPath.includes('robotwithdrawandbuy')) {
-            return res.json({ success: true, status: "completed" });
-        }
-
-        // 4. Plūsma: Kredītu papildināšana un atcelšana
-        if (urlPath.includes('topup-credits') || urlPath.includes('topupcredits')) {
-            return res.json({ success: true, newBalance: 110 });
-        }
-        if (urlPath.includes('cancel-mint') || urlPath.includes('cancelmint')) {
-            return res.json({ success: true, cancelled: true });
-        }
-    }
-    
-    next();
-});
-
-// Pārtveram multipart datus pirms Express tos aiztiek (tikai parastajai plūsmai)
+// Pārtveram multipart datus pirms Express tos aiztiek
 app.use((req, res, next) => {
     if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
         let data = [];
@@ -112,7 +47,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- CLOUDFLARE -> EXPRESS ADAPTERIS (TĪRS, BEZ TESTA LOGIKAS) ---
+// --- CLOUDFLARE -> EXPRESS ADAPTERIS ---
 function createCloudflareAdapter(handler) {
     return async (req, res) => {
         try {
@@ -126,32 +61,40 @@ function createCloudflareAdapter(handler) {
 
             const context = {
                 env: process.env, 
-                isLoadTest: false,
                 request: {
                     json: async () => req.body,
                     formData: async () => {
+                        // Izmantojam tīru, drošu glabātuvi
                         const storage = {};
+                        
                         if (req.rawBody) {
                             const contentType = req.headers['content-type'];
                             const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+                            
                             if (boundaryMatch) {
                                 const boundary = '--' + (boundaryMatch[1] || boundaryMatch[2]);
                                 const buffer = req.rawBody;
+                                
                                 let offset = 0;
                                 while ((offset = buffer.indexOf(boundary, offset)) !== -1) {
                                     offset += boundary.length;
                                     if (buffer[offset] === 0x2d && buffer[offset + 1] === 0x2d) break;
                                     offset += 2;
+                                    
                                     const nextBoundary = buffer.indexOf(boundary, offset);
                                     if (nextBoundary === -1) break;
+                                    
                                     const part = buffer.subarray(offset, nextBoundary);
                                     const headerEnd = part.indexOf('\r\n\r\n');
+                                    
                                     if (headerEnd !== -1) {
                                         const headerStr = part.subarray(0, headerEnd).toString('utf-8');
                                         const body = part.subarray(headerEnd + 4, part.length - 2);
+                                        
                                         const nameMatch = headerStr.match(/name="([^"]+)"/);
                                         const filenameMatch = headerStr.match(/filename="([^"]+)"/);
                                         const typeMatch = headerStr.match(/Content-Type:\s*([^\s\r\n]+)/);
+                                        
                                         if (nameMatch) {
                                             const key = nameMatch[1];
                                             if (filenameMatch) {
@@ -167,11 +110,14 @@ function createCloudflareAdapter(handler) {
                                 }
                             }
                         }
+                        
                         if (req.body) {
                             Object.keys(req.body).forEach(key => {
                                 storage[key] = req.body[key];
                             });
                         }
+                        
+                        // Šī ir DROŠĀ metodes emulācija, ki neizsauc sevi bezgalīgi
                         return {
                             get: (key) => storage[key] || null,
                             has: (key) => key in storage
@@ -187,11 +133,13 @@ function createCloudflareAdapter(handler) {
 
             if (cfResponse && (cfResponse instanceof Response || typeof cfResponse.json === 'function')) {
                 res.status(cfResponse.status || 200);
+                
                 if (cfResponse.headers && typeof cfResponse.headers.forEach === 'function') {
                     cfResponse.headers.forEach((value, key) => res.setHeader(key, value));
                 } else {
                     res.setHeader('Content-Type', 'application/json');
                 }
+
                 try {
                     const jsonBuffer = await cfResponse.json();
                     return res.json(jsonBuffer);
@@ -227,6 +175,8 @@ async function walkRoutes(dir, routePrefix = '/api') {
             await walkRoutes(fullPath, `${routePrefix}/${file}`);
         } else if (file.endsWith('.js')) {
             const routeName = file === 'index.js' ? '' : `/${file.slice(0, -3)}`;
+            
+            // ✅ LABOJUMS: Pārvēršam visu maršrutu uz mazajiem burtiem (lowercase), lai novērstu 404 kļūdas Linux vidē
             const fullRoute = `${routePrefix}${routeName}`.toLowerCase();
             
             try {
