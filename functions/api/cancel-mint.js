@@ -92,23 +92,25 @@ export async function onRequestPost(context) {
     try {
       const cancelTx = await contractWithSigner.cancelMint(wallet);
       console.log(`🤖 Cancel tx sent! Hash: ${cancelTx.hash}`);
-      await cancelTx.wait();
-      console.log('🤖 ✅ Mint cancelled! Deposit refunded to user.');
+      
+      // ✅ `cancelTx.wait()` ir izņemts. Atgriežam atbildi uzreiz pēc nosūtīšanas.
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Transaction submitted successfully to the network',
+        txHash: cancelTx.hash,
+        wallet: wallet,
+        refundAmount: pendingMint.deposit.toString(),
+        refundEth: ethers.formatEther(pendingMint.deposit)
+      }), {
+        status: 200, headers: { "Content-Type": "application/json" }
+      });
+
     } catch (cancelError) {
       console.error('❌ Cancel failed:', cancelError.message);
       return new Response(JSON.stringify({ success: false, error: 'Cancel failed: ' + cancelError.message }), {
         status: 500, headers: { "Content-Type": "application/json" }
       });
     }
-
-    return new Response(JSON.stringify({
-      success: true,
-      wallet: wallet,
-      refundAmount: pendingMint.deposit.toString(),
-      refundEth: ethers.formatEther(pendingMint.deposit)
-    }), {
-      status: 200, headers: { "Content-Type": "application/json" }
-    });
 
   } catch (error) {
     console.error('💥 Cancel mint error:', error);
