@@ -20,25 +20,34 @@ jobs:
         with:
           node-version: '22'
           
-      # 🚀 LABOJUMS 1: Izpildām npm update, kas ignorē veco lock failu un reāli atvelk jaunākās versijas
-      - name: Update dependencies and rewrite package-lock
-        run: npm update
+      # 🚀 LABOJUMS 1: Pilnībā nodzēšam lock failu un uzbūvējam no jauna ar install
+      - name: Force rebuild package-lock
+        run: |
+          rm -f package-lock.json
+          npm install
+
+      # 🔍 ŠIS SOLIS PARĀDĪS VAINĪGO:
+      # Pārbaudām, kuras pakotnes pieprasa turbo-sdk un kura versija tiek ielikta
+      - name: Find out who blocks turbo-sdk
+        run: |
+          npm ls @ardrive/turbo-sdk || echo "Parādām konfliktu koku..."
 
       # Šī rindiņa piespiež nodzēst papildus ievainojamības, ja tādas palikušas
       - name: Run npm audit fix
         run: npm audit fix --force || echo "Salabots viss, ko varēja"
       
-      # 🚀 LABOJUMS 2: Sakārtots Commit & Push ar [skip ci] un zaru noteikšanu
+      # 🚀 LABOJUMS 2: Sakārtots Commit & Push ar [skip ci]
       - name: Commit & Push updated package-lock.json
         run: |
-          # Pārbaudām, vai fails vispār ir mainījies, lai netaisītu tukšus commitus
-          if git diff --exit-code package-lock.json; then
+          git add package-lock.json
+          
+          # Pārbaudām staged izmaiņas
+          if git diff --cached --exit-code package-lock.json; then
             echo "Nav jaunu versiju, package-lock.json nav mainījies."
           else
             echo "Atrasti atjauninājumi! Veicam saglabāšanu..."
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package-lock.json
             
             # Pievienojam [skip ci], lai Action neieietu bezgalīgā cilpā
             git commit -m "chore: auto-update package-lock.json [skip ci]"
