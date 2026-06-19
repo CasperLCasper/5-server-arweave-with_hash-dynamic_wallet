@@ -6,6 +6,10 @@ import { showToast, showProgress, setProgress, hideProgress } from './ui.js';
 import { ARWEAVE_GATEWAY } from './config.js';
 import { UI } from './state.js';
 
+// 🚀 LABOJUMS: Importējam JSZip tieši kā moduli no CDN. 
+// Tas garantē, ka bibliotēka būs ielādējusies un pieejama kā window.JSZip pirms funkciju izsaukšanas.
+import 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+
 /**
  * Parāda augšupielādēto failu priekšskatījumu ar Arweave linkiem
  */
@@ -41,8 +45,12 @@ export function downloadFile(blob, filename) {
  * Lejupielādē visus failus kā ZIP arhīvu
  */
 export async function downloadAllFiles(files) {
-  // JSZip ir globāli pieejams no CDN (ielādēts index.html)
-  const zip = new JSZip();
+  // 🎯 LABOJUMS: Pārliecināmies, ka izsaucam JSZip caur globālo window objektu
+  if (!window.JSZip) {
+    throw new Error("JSZip bibliotēka vēl nav pilnībā ielādējusies. Lūdzu, mēģiniet vēlreiz!");
+  }
+  
+  const zip = new window.JSZip();
   
   for (const { blob, filename } of files) {
     zip.file(filename, blob);
