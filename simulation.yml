@@ -1,0 +1,22 @@
+config:
+  target: "https://five-server-arweave-with-hash-dynamic.onrender.com"
+  phases:
+    - duration: 30          # Tests ilgs 30 sekundes
+      arrivalRate: 5        # Katru sekundi klāt nāks 5 jauni lietotāji
+      name: "Parasta slodze bezmaksas plānam"
+
+scenarios:
+  - name: "Lietotājs A: Tikai pārbauda statusu (Viegls pieprasījums)"
+    weight: 60              # 60% no visiem lietotājiem darīs šo
+    flow:
+      - get:
+          url: "/api/status" # Nomaini uz savu reālo statusa URL, ja ir
+
+  - name: "Lietotājs B: Mēģina atcelt mint (Vidēji smags pieprasījums)"
+    weight: 40              # 40% no visiem lietotājiem darīs šo
+    flow:
+      - post:
+          url: "/api/cancel-mint"
+          json:
+            txHash: "0x123"
+            wallet: "0x456"
