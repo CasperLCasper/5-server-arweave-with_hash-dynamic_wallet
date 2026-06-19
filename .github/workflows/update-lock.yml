@@ -1,9 +1,7 @@
 name: Update package-lock.json
 
 on:
-  workflow_dispatch:   # Ļauj jebkurā brīdī palaist manuāli ar pogu
-  schedule:
-    - cron: '0 0 * * 1'  # Automātiski palaidīsies katru pirmdienas rītu (00:00 UTC)
+  workflow_dispatch:   # ļauj manuāli palaist no GitHub Actions paneļa
 
 permissions:
   contents: write
@@ -12,46 +10,15 @@ jobs:
   update-lock:
     runs-on: ubuntu-latest
     steps:
-      # Izmantojam jaunāko checkout versiju
-      - uses: actions/checkout@v5
-      
-      # Nodrošinām Node.js vidi
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          
-      # 🚀 LABOJUMS 1: Pilnībā nodzēšam lock failu un uzbūvējam no jauna ar install
-      - name: Force rebuild package-lock
+      - run: npm install
+      - name: Commit & Push
         run: |
-          rm -f package-lock.json
-          npm install
-
-      # 🔍 ŠIS SOLIS PARĀDĪS VAINĪGO:
-      # Pārbaudām, kuras pakotnes pieprasa turbo-sdk un kura versija tiek ielikta
-      - name: Find out who blocks turbo-sdk
-        run: |
-          npm ls @ardrive/turbo-sdk || echo "Parādām konfliktu koku..."
-
-      # Šī rindiņa piespiež nodzēst papildus ievainojamības, ja tādas palikušas
-      - name: Run npm audit fix
-        run: npm audit fix --force || echo "Salabots viss, ko varēja"
-      
-      # 🚀 LABOJUMS 2: Sakārtots Commit & Push ar [skip ci]
-      - name: Commit & Push updated package-lock.json
-        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json
-          
-          # Pārbaudām staged izmaiņas
-          if git diff --cached --exit-code package-lock.json; then
-            echo "Nav jaunu versiju, package-lock.json nav mainījies."
-          else
-            echo "Atrasti atjauninājumi! Veicam saglabāšanu..."
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            
-            # Pievienojam [skip ci], lai Action neieietu bezgalīgā cilpā
-            git commit -m "chore: auto-update package-lock.json [skip ci]"
-            
-            # Drošs push uz pašreizējo aktīvo zaru
-            git push origin HEAD:${{ github.ref_name }}
-          fi
+          git commit -m "Update package-lock.json with safe ws" || echo "No changes to commit"
+          git push
