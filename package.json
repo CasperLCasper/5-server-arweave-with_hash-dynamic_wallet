@@ -38,6 +38,10 @@
   "overrides": {
     "@solana/web3.js": "^1.95.8",
     "arweave": "^1.15.5",
-    "axios": "^1.7.4"
+    "axios": "^1.7.4",
+    "ws": "^8.17.1",
+    "@ethersproject/providers": {
+      "ws": "^7.4.6"
+    }
   }
 }
