@@ -117,7 +117,7 @@ function createCloudflareAdapter(handler) {
                             });
                         }
                         
-                        // Šī ir DROŠĀ metodes emulācija, kas neizsauc sevi bezgalīgi
+                        // Šī ir DROŠĀ metodes emulācija, ki neizsauc sevi bezgalīgi
                         return {
                             get: (key) => storage[key] || null,
                             has: (key) => key in storage
@@ -175,7 +175,9 @@ async function walkRoutes(dir, routePrefix = '/api') {
             await walkRoutes(fullPath, `${routePrefix}/${file}`);
         } else if (file.endsWith('.js')) {
             const routeName = file === 'index.js' ? '' : `/${file.slice(0, -3)}`;
-            const fullRoute = `${routePrefix}${routeName}`;
+            
+            // ✅ LABOJUMS: Pārvēršam visu maršrutu uz mazajiem burtiem (lowercase), lai novērstu 404 kļūdas Linux vidē
+            const fullRoute = `${routePrefix}${routeName}`.toLowerCase();
             
             try {
                 const fileUrl = new URL(`file://${fullPath}`).href;
