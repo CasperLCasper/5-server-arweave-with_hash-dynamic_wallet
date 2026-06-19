@@ -34,5 +34,10 @@
     "permanent-storage"
   ],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "overrides": {
+    "@solana/web3.js": "^1.95.8",
+    "arweave": "^1.15.5",
+    "axios": "^1.7.4"
+  }
 }
