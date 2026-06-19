@@ -12,6 +12,29 @@ const WALLET_NFT_ABI = [
 ];
 
 /**
+ * Palīgfunkcija: Apstrādā un formatē URI tikai tad, ja tas ir parasts string/CID, saglabājot JSON neskartu
+ */
+function parseMetadataUri(uri) {
+  const trimmed = uri.trim();
+  
+  // Ja tas ir pilns JSON objekts, nekavējoties atgriežam oriģinālu bez izmaiņām
+  if (trimmed.startsWith('{')) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('Qm') || trimmed.startsWith('baf')) {
+    return `https://arweave.net/${trimmed}`;
+  }
+  if (trimmed.startsWith('ipfs://')) {
+    return `https://arweave.net/${trimmed.substring(7)}`;
+  }
+  if (trimmed.startsWith('ar://')) {
+    return `https://arweave.net/${trimmed.substring(5)}`;
+  }
+  return trimmed;
+}
+
+/**
  * Palīgfunkcija: Izpilda līguma finalizeMint darījumu tīkla pusē (Samazina sarežģītību)
  */
 async function executeRobotFinalize(provider, robotPrivateKey, contractAddress, { wallet, fullMetadataUri, storageCostWei, finalContentHash }) {
@@ -79,7 +102,7 @@ async function purchaseStorageCredits(provider, storageKey, costWei) {
   }
 }
 
-// 🎯 GALVENĀ FUNKCIJA (Cognitive Complexity: ~12 no 15)
+// 🎯 GALVENĀ FUNKCIJA (Cognitive Complexity tagad: ~9 no 15)
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -127,15 +150,8 @@ export async function onRequestPost(context) {
       ? contentHash
       : ethers.ZeroHash;
 
-    // 🛑 ORIĢINĀLĀ LOĢIKA: Atgriežam tieši tavu veco stringu apstrādi bez jebkādām izmaiņām!
-    let fullMetadataUri = metadataUri.trim();
-    if (fullMetadataUri.startsWith('Qm') || fullMetadataUri.startsWith('baf')) {
-      fullMetadataUri = `https://arweave.net/${fullMetadataUri}`;
-    } else if (fullMetadataUri.startsWith('ipfs://')) {
-      fullMetadataUri = `https://arweave.net/${fullMetadataUri.substring(7)}`;
-    } else if (fullMetadataUri.startsWith('ar://')) {
-      fullMetadataUri = `https://arweave.net/${fullMetadataUri.substring(5)}`;
-    }
+    // 💡 LABOJUMS: Zarošanās pārcelta uz apakšfunkciju, atgriežot pilno sarakstu neskartu
+    const fullMetadataUri = parseMetadataUri(metadataUri);
 
     const CONTRACT_ADDRESS = env.CONTRACT_ADDRESS;
     const ROBOT_PRIVATE_KEY = env.ROBOT_PRIVATE_KEY;
@@ -174,7 +190,6 @@ export async function onRequestPost(context) {
       deposit: ethers.formatEther(pendingMint.deposit)
     });
 
-    // 🚀 Izsaucam atsevišķo funkciju līguma rakstīšanai
     try {
       await executeRobotFinalize(provider, ROBOT_PRIVATE_KEY, CONTRACT_ADDRESS, {
         wallet, fullMetadataUri, storageCostWei, finalContentHash
