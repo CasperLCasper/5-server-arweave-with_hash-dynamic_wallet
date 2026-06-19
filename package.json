@@ -9,14 +9,14 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@ardrive/turbo-sdk": "^1.41.3",
+    "@ardrive/turbo-sdk": "^1.14.0",
     "@upstash/redis": "^1.28.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "ethers": "^6.11.1",
     "express": "^4.19.2",
     "jose": "^5.2.3",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^2.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
