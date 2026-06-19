@@ -13,6 +13,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
+// 🔒 DROŠĪBA: Pilnībā atslēdzam X-Powered-By galveni pašā saknē, lai nopludinātu Express versiju
+app.disable('x-powered-by');
+
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '100mb' }));
@@ -64,7 +68,6 @@ function createCloudflareAdapter(handler) {
                 request: {
                     json: async () => req.body,
                     formData: async () => {
-                        // Izmantojam tīru, drošu glabātuvi
                         const storage = {};
                         
                         if (req.rawBody) {
@@ -117,7 +120,6 @@ function createCloudflareAdapter(handler) {
                             });
                         }
                         
-                        // Šī ir DROŠĀ metodes emulācija, ki neizsauc sevi bezgalīgi
                         return {
                             get: (key) => storage[key] || null,
                             has: (key) => key in storage
@@ -175,8 +177,6 @@ async function walkRoutes(dir, routePrefix = '/api') {
             await walkRoutes(fullPath, `${routePrefix}/${file}`);
         } else if (file.endsWith('.js')) {
             const routeName = file === 'index.js' ? '' : `/${file.slice(0, -3)}`;
-            
-            // ✅ LABOJUMS: Pārvēršam visu maršrutu uz mazajiem burtiem (lowercase), lai novērstu 404 kļūdas Linux vidē
             const fullRoute = `${routePrefix}${routeName}`.toLowerCase();
             
             try {
