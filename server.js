@@ -14,41 +14,68 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// 🔒 DROŠĪBA: Pilnībā atslēdzam X-Powered-By galveni pašā saknē, lai nopludinātu Express versiju
+// 🔒 DROŠĪBA 1: Pilnībā atslēdzam X-Powered-By galveni pašā saknē
 app.disable('x-powered-by');
 
-const PORT = process.env.PORT || 3000;
+// 🔒 DROŠĪBA 2: CSP un drošības galveņu bloks PAŠĀ AUGŠĀ
+// Tas garantē, ka ZAP skeneris redzēs galvenes gan pie API, gan pie index.html pieprasījumiem
+app.use((req, res, next) => {
+    const cspPolicy = 
+        "default-src 'none'; " +
+        "script-src 'self' https://cdn.jsdelivr.net; " +
+        "connect-src 'self' https://*.ardrive.io https://*.sepolia.base.org https://*.rpc.com wss:; " + // Sašaurinām, lai ZAP nebļautu par pliku 'https:'
+        "img-src 'self' data: https://*.arweave.net blob:; " +
+        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " +
+        "font-src 'self' https://fonts.gstatic.com; " +
+        "media-src 'self' blob:; " +
+        "video-src 'self' blob:; " +
+        "object-src 'none'; " +
+        "frame-ancestors 'none'; " +
+        "form-action 'self'; " +
+        "base-uri 'self'; " +
+        "manifest-src 'self'; " +
+        "worker-src 'self' blob:; " +
+        "upgrade-insecure-requests;";
 
+    res.setHeader('Content-Security-Policy', cspPolicy);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    next();
+});
+
+// Standarta Express parseri ar izmēra limitiem
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-// Pārtveram multipart datus pirms Express tos aiztiek
+// 🛡️ DROŠĪBA 3: Uzlabots multipart parseris ar RAM aizsardzību (pret DoS uzbrukumiem)
 app.use((req, res, next) => {
     if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
+        const maxLimit = 100 * 1024 * 1024; // 100 MB limits baitos
+        let receivedBytes = 0;
         let data = [];
-        req.on('data', chunk => data.push(chunk));
+        
+        req.on('data', chunk => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > maxLimit) {
+                req.destroy(); // Nogriežam savienojumu, ja kāds mēģina "pārpludināt" servera atmiņu
+                return res.status(413).json({ error: "Payload Too Large", message: "Maksimālais faila izmērs ir 100MB" });
+            }
+            data.push(chunk);
+        });
+
         req.on('end', () => {
-            req.rawBody = Buffer.concat(data);
-            next();
+            if (receivedBytes <= maxLimit) {
+                req.rawBody = Buffer.concat(data);
+                next();
+            }
         });
     } else {
         next();
     }
-});
-
-// --- DROŠĪBAS MIDDLWARE (CSP) ---
-app.use((req, res, next) => {
-    res.setHeader(
-        'Content-Security-Policy',
-        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net chrome-extension:; connect-src 'self' https: wss: chrome-extension:; img-src 'self' data: https: blob:; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; media-src 'self' blob:; video-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; manifest-src 'self'; worker-src 'self' blob:; upgrade-insecure-requests;"
-    );
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    next();
 });
 
 // --- CLOUDFLARE -> EXPRESS ADAPTERIS ---
@@ -102,7 +129,7 @@ function createCloudflareAdapter(handler) {
                                             const key = nameMatch[1];
                                             if (filenameMatch) {
                                                 const filename = filenameMatch[1];
-                                                const mimeType = typeMatch ? typeMatch[1] : 'image/png';
+                                                const mimeType = typeMatch ? typeMatch[1] : 'application/octet-stream'; // Drošāka noklusējuma vērtība Web3 failiem
                                                 storage[key] = new File([body], filename, { type: mimeType });
                                             } else {
                                                 storage[key] = body.toString('utf-8');
@@ -205,12 +232,14 @@ async function walkRoutes(dir, routePrefix = '/api') {
 
 await walkRoutes(apiDir);
 
+// Statiskie faili tagad smuki paņems līdzi augstāk definētās CSP galvenes
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Serveris aktīvs uz porta ${PORT}`);
 });
