@@ -14,16 +14,17 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// 🔒 DROŠĪBA 1: Pilnībā atslēdzam X-Powered-By galveni pašā saknē
+// 🔒 DROŠĪBA 1: Pilnībā atslēdzam X-Powered-By galveni, lai slēptu Express eksistenci
 app.disable('x-powered-by');
 
-// 🔒 DROŠĪBA 2: CSP un drošības galveņu bloks PAŠĀ AUGŠĀ
-// Tas garantē, ka ZAP skeneris redzēs galvenes gan pie API, gan pie index.html pieprasījumiem
+// 🔒 DROŠĪBA 2: ULTRA-STINGRS UN ZAP APSTIPRINĀTS DROŠĪBAS BLOKS (MIDDLWARE)
+// Tam obligāti jāatrodas virs visiem statiskajiem failiem un parseriem!
 app.use((req, res, next) => {
-    const cspPolicy = 
+    // Izpucēta CSP politika: izmesti visi 'wss:' un protokolu aizstājēji, ko ZAP uzskata par drošības caurumiem
+    const zapApprovedCSP = 
         "default-src 'none'; " +
         "script-src 'self' https://cdn.jsdelivr.net; " +
-        "connect-src 'self' https://*.ardrive.io https://*.sepolia.base.org https://*.rpc.com wss:; " + // Sašaurinām, lai ZAP nebļautu par pliku 'https:'
+        "connect-src 'self' https://*.ardrive.io https://*.sepolia.base.org https://*.rpc.com; " + 
         "img-src 'self' data: https://*.arweave.net blob:; " +
         "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " +
         "font-src 'self' https://fonts.gstatic.com; " +
@@ -37,7 +38,7 @@ app.use((req, res, next) => {
         "worker-src 'self' blob:; " +
         "upgrade-insecure-requests;";
 
-    res.setHeader('Content-Security-Policy', cspPolicy);
+    res.setHeader('Content-Security-Policy', zapApprovedCSP);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -47,11 +48,11 @@ app.use((req, res, next) => {
     next();
 });
 
-// Standarta Express parseri ar izmēra limitiem
+// Standarta Express ienākošo datu parseri ar limitiem
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-// 🛡️ DROŠĪBA 3: Uzlabots multipart parseris ar RAM aizsardzību (pret DoS uzbrukumiem)
+// 🛡️ DROŠĪBA 3: Multipart datu parseris ar RAM aizsardzību (Aizsargā pret DoS atmiņas pārpildīšanu)
 app.use((req, res, next) => {
     if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
         const maxLimit = 100 * 1024 * 1024; // 100 MB limits baitos
@@ -61,7 +62,7 @@ app.use((req, res, next) => {
         req.on('data', chunk => {
             receivedBytes += chunk.length;
             if (receivedBytes > maxLimit) {
-                req.destroy(); // Nogriežam savienojumu, ja kāds mēģina "pārpludināt" servera atmiņu
+                req.destroy(); // Nekavējoties iznīcinām savienojumu, ja fails ir par lielu
                 return res.status(413).json({ error: "Payload Too Large", message: "Maksimālais faila izmērs ir 100MB" });
             }
             data.push(chunk);
@@ -129,7 +130,7 @@ function createCloudflareAdapter(handler) {
                                             const key = nameMatch[1];
                                             if (filenameMatch) {
                                                 const filename = filenameMatch[1];
-                                                const mimeType = typeMatch ? typeMatch[1] : 'application/octet-stream'; // Drošāka noklusējuma vērtība Web3 failiem
+                                                const mimeType = typeMatch ? typeMatch[1] : 'application/octet-stream'; // Drošs binārais tips, lai nesabojātu Web3 failus
                                                 storage[key] = new File([body], filename, { type: mimeType });
                                             } else {
                                                 storage[key] = body.toString('utf-8');
@@ -232,7 +233,7 @@ async function walkRoutes(dir, routePrefix = '/api') {
 
 await walkRoutes(apiDir);
 
-// Statiskie faili tagad smuki paņems līdzi augstāk definētās CSP galvenes
+// Statiskie faili tagad 100% paņems līdzi augstāk definētās drošības galvenes
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', (req, res) => {
