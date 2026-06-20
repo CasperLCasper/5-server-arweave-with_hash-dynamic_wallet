@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import cors from 'cors';
 import { fileURLToPath } from 'url';
 
 if (!globalThis.File) {
@@ -19,32 +18,6 @@ const app = express();
 app.disable('x-powered-by');
 
 const PORT = process.env.PORT || 3000;
-
-// 🆕 CORS konfigurācija Web3 platformai
-const allowedOrigins = [
-    'https://five-server-arweave-with-hash-dynamic.onrender.com',
-    'http://localhost:3000',
-    'http://localhost:5173',
-];
-
-app.use(cors({
-    origin: function (origin, callback) {
-        // Atļaut pieprasījumus bez origin (server-to-server, mobilās lietotnes, Web3 maki)
-        if (!origin) return callback(null, true);
-        
-        // Pārbaudīt, vai origin ir atļauto sarakstā
-        if (allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            console.warn(`CORS bloķēts: ${origin}`);
-            callback(new Error('Nav atļauts ar CORS politiku'));
-        }
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
-    credentials: true,
-    maxAge: 86400 // Kešot preflight pieprasījumus 24 stundas
-}));
 
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
@@ -67,21 +40,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
     res.setHeader(
         'Content-Security-Policy',
-        "default-src 'none'; " +
-        "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com chrome-extension:; " +
-        "connect-src 'self' https: wss: chrome-extension: https://*.infura.io https://*.alchemy.com https://*.alchemyapi.io https://*.walletconnect.com https://*.walletconnect.org wss://*.infura.io wss://*.alchemy.com; " +
-        "img-src 'self' data: https: blob: https://ipfs.io https://*.infura-ipfs.io; " +
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-        "font-src 'self' https://fonts.gstatic.com; " +
-        "media-src 'self' blob:; " +
-        "video-src 'self' blob:; " +
-        "object-src 'none'; " +
-        "frame-ancestors 'none'; " +
-        "form-action 'self'; " +
-        "base-uri 'self'; " +
-        "manifest-src 'self'; " +
-        "worker-src 'self' blob:; " +
-        "upgrade-insecure-requests;"
+        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net chrome-extension:; connect-src 'self' https: wss: chrome-extension:; img-src 'self' data: https: blob:; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; media-src 'self' blob:; video-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; manifest-src 'self'; worker-src 'self' blob:; upgrade-insecure-requests;"
     );
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('X-Frame-Options', 'DENY');
