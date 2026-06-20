@@ -14,8 +14,31 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// 🔒 DROŠĪBA: Pilnībā atslēdzam X-Powered-By galveni pašā saknē, lai nopludinātu Express versiju
+// 🔒 DROŠĪBA 1: Pilnībā atslēdzam X-Powered-By galveni pašā saknē
 app.disable('x-powered-by');
+
+// 🔒 DROŠĪBA 2: Globāls drošības filtrs visiem pieprasījumiem (ZAP un Mozilla salāgošana)
+app.use((req, res, next) => {
+    // Tava oriģinālā, strādājošā CSP politika
+    res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net chrome-extension:; connect-src 'self' https: wss: chrome-extension:; img-src 'self' data: https: blob:; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; media-src 'self' blob:; video-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; manifest-src 'self'; worker-src 'self' blob:; upgrade-insecure-requests;"
+    );
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Content-Type-Options', 'nosniff'); // Vienmēr aktīvs pret MIME-sniffing
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+
+    // LABOJUMS PRET CORS: Tā kā frontend un backend ir vienā vietā, dzēšam CORS vaļā esošās galvenes, ja tādas parādās
+    res.removeHeader('Access-Control-Allow-Origin');
+
+    // LABOJUMS PRET TIMESTAMP DISCLOSURE: Neļaujam Express sūtīt servera laiku HTTP galvenēs
+    res.removeHeader('Date');
+
+    next();
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -36,21 +59,6 @@ app.use((req, res, next) => {
     }
 });
 
-// --- DROŠĪBAS MIDDLWARE (CSP) ---
-app.use((req, res, next) => {
-    res.setHeader(
-        'Content-Security-Policy',
-        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net chrome-extension:; connect-src 'self' https: wss: chrome-extension:; img-src 'self' data: https: blob:; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; media-src 'self' blob:; video-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; manifest-src 'self'; worker-src 'self' blob:; upgrade-insecure-requests;"
-    );
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    next();
-});
-
 // --- CLOUDFLARE -> EXPRESS ADAPTERIS ---
 function createCloudflareAdapter(handler) {
     return async (req, res) => {
@@ -69,7 +77,6 @@ function createCloudflareAdapter(handler) {
                     json: async () => req.body,
                     formData: async () => {
                         const storage = {};
-                        
                         if (req.rawBody) {
                             const contentType = req.headers['content-type'];
                             const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
@@ -133,11 +140,16 @@ function createCloudflareAdapter(handler) {
 
             const cfResponse = await handler(context);
 
+            // Nodrošinām drošības galveņu saglabāšanu arī adaptera atbildēs
+            res.removeHeader('Date');
+
             if (cfResponse && (cfResponse instanceof Response || typeof cfResponse.json === 'function')) {
                 res.status(cfResponse.status || 200);
                 
                 if (cfResponse.headers && typeof cfResponse.headers.forEach === 'function') {
-                    cfResponse.headers.forEach((value, key) => res.setHeader(key, value));
+                    cfResponse.headers.forEach((value, key) => {
+                        if (key.toLowerCase() !== 'date') res.setHeader(key, value);
+                    });
                 } else {
                     res.setHeader('Content-Type', 'application/json');
                 }
@@ -158,6 +170,8 @@ function createCloudflareAdapter(handler) {
             res.status(200).end();
         } catch (err) {
             console.error(`Kļūda adapterī izpildot maršrutu:`, err);
+            // Salabota kļūdu lapa: ja API avarē, tai tik un tā būs uzliktas visas drošības galvenes un novākts laiks
+            res.removeHeader('Date');
             res.status(500).json({ error: "Internal Server Error", message: err.message });
         }
     };
@@ -205,10 +219,22 @@ async function walkRoutes(dir, routePrefix = '/api') {
 
 await walkRoutes(apiDir);
 
+// Statiskie faili
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Pārliecināmies, ka SPA fallback maršrutam arī nav laika zīmes
 app.get('*', (req, res) => {
+    res.removeHeader('Date');
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// 🔒 DROŠĪBA 3: Centralizēts Express kļūdu middleware (Catch-all error handler)
+// Ja kāds pieprasījums pilnībā salauž Express plūsmu, šis nodrošina drošības galvenes un tīru kļūdu bez noplūdēm
+app.use((err, req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.removeHeader('Date');
+    res.status(500).json({ error: "Internal Server Error" });
 });
 
 app.listen(PORT, () => {
