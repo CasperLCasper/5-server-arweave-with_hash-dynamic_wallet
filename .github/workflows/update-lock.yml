@@ -1,7 +1,9 @@
 name: Update package-lock.json
 
 on:
-  workflow_dispatch:   # ļauj manuāli palaist no GitHub Actions paneļa
+  workflow_dispatch: # Saglabā iespēju palaist manuāli ar pogu no GitHub Actions paneļa
+  schedule:
+    - cron: '0 0 * * 1' # Automātiski izpildīsies katru pirmdienu plkst. 00:00 UTC
 
 permissions:
   contents: write
