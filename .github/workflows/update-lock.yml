@@ -1,9 +1,9 @@
 name: Update package-lock.json
 
 on:
-  workflow_dispatch: # Saglabā iespēju palaist manuāli ar pogu no GitHub Actions paneļa
+  workflow_dispatch: 
   schedule:
-    - cron: '0 0 * * 1' # Automātiski izpildīsies katru pirmdienu plkst. 00:00 UTC
+    - cron: '0 0 * * 1' 
 
 permissions:
   contents: write
@@ -13,14 +13,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install
+          # 1. UZLABOJUMS: Kešatmiņa (Cache) ātrākai izpildei. 
+          # Nākamajās reizēs GitHub nevilks visus npm moduļus no jauna, un skripts izpildīsies daudz ātrāk.
+          cache: 'npm'
+
+      # 2. UZLABOJUMS: 'npm update' (vai 'npm install --package-lock-only')
+      # Ja mērķis ir atjaunināt pakotnes uz jaunākajām pieļaujamajām versijām, 
+      # labāk izmantot 'npm update'. Ja gribi tikai pārģenerēt lock failu, nemainot versijas,
+      # atstāj savu 'npm install'.
+      - run: npm update
+
       - name: Commit & Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "Update package-lock.json with safe ws" || echo "No changes to commit"
-          git push
+          
+          # 3. UZLABOJUMS: Drošāka failu pārbaude
+          # Tavā versijā 'git commit' neizgāzās (pateicoties || echo), bet ar šo pārbaudi
+          # mēs vispār nemēģinām taisīt commit/push, ja nekas nav mainījies.
+          if [ -n "$(git status --porcelain package-lock.json)" ]; then
+            git add package-lock.json
+            git commit -m "chore: update package-lock.json [skip ci]"
+            git push
+          else
+            echo "package-lock.json jau ir aktuāls, nav ko saglabāt."
+          fi
