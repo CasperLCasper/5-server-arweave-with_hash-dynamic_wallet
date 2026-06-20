@@ -14,21 +14,21 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// 🔒 DROŠĪBA 1: Pilnībā atslēdzam X-Powered-By galveni
+// 🔒 DROŠĪBA 1: Paslēpjam Express versiju
 app.disable('x-powered-by');
 
-// 🔒 DROŠĪBA 2: DROŠĪBAS BLOKS PAŠĀ AUGŠĀ (Redzams ZAP skenerim, bet NEBLOĶĒ Web3)
+// 🔒 DROŠĪBA 2: MAKSIMĀLI SAŠAURINĀTS CSP (BEZ GLOBĀLIEM WILDCARDS)
 app.use((req, res, next) => {
-    // connect-src ar https://* un wss://* garantē, ka ethers.js varēs brīvi sasniegt jebkuru RPC mezglu
-    const flexibleWeb3CSP = 
+    // Šeit esam nomainījuši zvaigznītes uz konkrētiem, drošiem Web3 infrastruktūras domēniem
+    const strictWeb3CSP = 
         "default-src 'none'; " +
-        "script-src 'self' https://cdn.jsdelivr.net chrome-extension: 'unsafe-inline' 'unsafe-eval'; " +
-        "connect-src 'self' https://* wss://* chrome-extension:; " + 
-        "img-src 'self' data: https://* blob:; " + 
-        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " +
+        "script-src 'self' https://cdn.jsdelivr.net chrome-extension:; " + // Izmests 'unsafe-eval' un 'unsafe-inline' skriptiem
+        "connect-src 'self' https://*.ardrive.io https://*.sepolia.base.org https://sepolia.base.org https://*.arweave.net https://*.rpc.com wss://*.rpc.com chrome-extension:; " + // Tikai specifiski Web3 domēni
+        "img-src 'self' data: https://*.arweave.net https://*.ardrive.io blob:; " + // Attēli tikai no Arweave/ArDrive
+        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " + // Fontiem stili joprojām drošības pēc vajadzīgi inline
         "font-src 'self' https://fonts.gstatic.com; " +
-        "media-src 'self' blob: https://*; " +
-        "video-src 'self' blob: https://*; " +
+        "media-src 'self' blob: https://*.arweave.net; " +
+        "video-src 'self' blob: https://*.arweave.net; " +
         "object-src 'none'; " +
         "frame-ancestors 'none'; " +
         "form-action 'self'; " +
@@ -37,7 +37,7 @@ app.use((req, res, next) => {
         "worker-src 'self' blob:; " +
         "upgrade-insecure-requests;";
 
-    res.setHeader('Content-Security-Policy', flexibleWeb3CSP);
+    res.setHeader('Content-Security-Policy', strictWeb3CSP);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -47,21 +47,21 @@ app.use((req, res, next) => {
     next();
 });
 
-// Standarta Express parseri ienākošajiem datiem
+// Standarta Express parseri
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-// 🛡️ DROŠĪBA 3: Uzlabots multipart parseris ar RAM aizsardzību (Aizsargā pret DoS)
+// 🛡️ DROŠĪBA 3: Multipart parseris ar RAM aizsardzību
 app.use((req, res, next) => {
     if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
-        const maxLimit = 100 * 1024 * 1024; // 100 MB limits baitos
+        const maxLimit = 100 * 1024 * 1024;
         let receivedBytes = 0;
         let data = [];
         
         req.on('data', chunk => {
             receivedBytes += chunk.length;
             if (receivedBytes > maxLimit) {
-                req.destroy(); // Nogriežam savienojumu, lai glābtu servera RAM
+                req.destroy();
                 return res.status(413).json({ error: "Payload Too Large", message: "Maksimālais faila izmērs ir 100MB" });
             }
             data.push(chunk);
@@ -232,7 +232,7 @@ async function walkRoutes(dir, routePrefix = '/api') {
 
 await walkRoutes(apiDir);
 
-// Statiskie faili saņem drošības galvenes, jo middleware atrodas augšā
+// Statiskie faili
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', (req, res) => {
