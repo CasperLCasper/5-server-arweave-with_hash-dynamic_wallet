@@ -14,22 +14,21 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// 🔒 DROŠĪBA 1: Pilnībā atslēdzam X-Powered-By galveni, lai slēptu Express eksistenci
+// 🔒 DROŠĪBA 1: Pilnībā atslēdzam X-Powered-By galveni
 app.disable('x-powered-by');
 
-// 🔒 DROŠĪBA 2: ULTRA-STINGRS UN ZAP APSTIPRINĀTS DROŠĪBAS BLOKS (MIDDLWARE)
-// Tam obligāti jāatrodas virs visiem statiskajiem failiem un parseriem!
+// 🔒 DROŠĪBA 2: DROŠĪBAS BLOKS PAŠĀ AUGŠĀ (Redzams ZAP skenerim, bet NEBLOĶĒ Web3)
 app.use((req, res, next) => {
-    // Izpucēta CSP politika: izmesti visi 'wss:' un protokolu aizstājēji, ko ZAP uzskata par drošības caurumiem
-    const zapApprovedCSP = 
+    // connect-src ar https://* un wss://* garantē, ka ethers.js varēs brīvi sasniegt jebkuru RPC mezglu
+    const flexibleWeb3CSP = 
         "default-src 'none'; " +
-        "script-src 'self' https://cdn.jsdelivr.net; " +
-        "connect-src 'self' https://*.ardrive.io https://*.sepolia.base.org https://*.rpc.com; " + 
-        "img-src 'self' data: https://*.arweave.net blob:; " +
+        "script-src 'self' https://cdn.jsdelivr.net chrome-extension: 'unsafe-inline' 'unsafe-eval'; " +
+        "connect-src 'self' https://* wss://* chrome-extension:; " + 
+        "img-src 'self' data: https://* blob:; " + 
         "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " +
         "font-src 'self' https://fonts.gstatic.com; " +
-        "media-src 'self' blob:; " +
-        "video-src 'self' blob:; " +
+        "media-src 'self' blob: https://*; " +
+        "video-src 'self' blob: https://*; " +
         "object-src 'none'; " +
         "frame-ancestors 'none'; " +
         "form-action 'self'; " +
@@ -38,7 +37,7 @@ app.use((req, res, next) => {
         "worker-src 'self' blob:; " +
         "upgrade-insecure-requests;";
 
-    res.setHeader('Content-Security-Policy', zapApprovedCSP);
+    res.setHeader('Content-Security-Policy', flexibleWeb3CSP);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -48,11 +47,11 @@ app.use((req, res, next) => {
     next();
 });
 
-// Standarta Express ienākošo datu parseri ar limitiem
+// Standarta Express parseri ienākošajiem datiem
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-// 🛡️ DROŠĪBA 3: Multipart datu parseris ar RAM aizsardzību (Aizsargā pret DoS atmiņas pārpildīšanu)
+// 🛡️ DROŠĪBA 3: Uzlabots multipart parseris ar RAM aizsardzību (Aizsargā pret DoS)
 app.use((req, res, next) => {
     if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
         const maxLimit = 100 * 1024 * 1024; // 100 MB limits baitos
@@ -62,7 +61,7 @@ app.use((req, res, next) => {
         req.on('data', chunk => {
             receivedBytes += chunk.length;
             if (receivedBytes > maxLimit) {
-                req.destroy(); // Nekavējoties iznīcinām savienojumu, ja fails ir par lielu
+                req.destroy(); // Nogriežam savienojumu, lai glābtu servera RAM
                 return res.status(413).json({ error: "Payload Too Large", message: "Maksimālais faila izmērs ir 100MB" });
             }
             data.push(chunk);
@@ -130,7 +129,7 @@ function createCloudflareAdapter(handler) {
                                             const key = nameMatch[1];
                                             if (filenameMatch) {
                                                 const filename = filenameMatch[1];
-                                                const mimeType = typeMatch ? typeMatch[1] : 'application/octet-stream'; // Drošs binārais tips, lai nesabojātu Web3 failus
+                                                const mimeType = typeMatch ? typeMatch[1] : 'application/octet-stream';
                                                 storage[key] = new File([body], filename, { type: mimeType });
                                             } else {
                                                 storage[key] = body.toString('utf-8');
@@ -233,7 +232,7 @@ async function walkRoutes(dir, routePrefix = '/api') {
 
 await walkRoutes(apiDir);
 
-// Statiskie faili tagad 100% paņems līdzi augstāk definētās drošības galvenes
+// Statiskie faili saņem drošības galvenes, jo middleware atrodas augšā
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', (req, res) => {
