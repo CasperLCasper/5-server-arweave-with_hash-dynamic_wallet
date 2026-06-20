@@ -19,10 +19,10 @@ app.disable('x-powered-by');
 
 // 🔒 DROŠĪBA 2: Globāls drošības filtrs visiem pieprasījumiem (ZAP un Mozilla salāgošana)
 app.use((req, res, next) => {
-    // Tava oriģinālā, strādājošā CSP politika
+    // CSP politika salabota: izdzēsts 'video-src', atstāts tikai 'media-src'
     res.setHeader(
         'Content-Security-Policy',
-        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net chrome-extension:; connect-src 'self' https: wss: chrome-extension:; img-src 'self' data: https: blob:; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; media-src 'self' blob:; video-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; manifest-src 'self'; worker-src 'self' blob:; upgrade-insecure-requests;"
+        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net chrome-extension:; connect-src 'self' https: wss: chrome-extension:; img-src 'self' data: https: blob:; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; manifest-src 'self'; worker-src 'self' blob:; upgrade-insecure-requests;"
     );
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('X-Frame-Options', 'DENY');
