@@ -35,24 +35,57 @@ function parseMetadataUri(uri) {
 }
 
 /**
- * Palīgfunkcija: Izpilda līguma finalizeMint darījumu tīkla pusē (Samazina sarežģītību)
+ * Palīgfunkcija: Izpilda līguma finalizeMint darījumu tīkla pusē ar Nonce un Retry pārvaldību
  */
 async function executeRobotFinalize(provider, robotPrivateKey, contractAddress, { wallet, fullMetadataUri, storageCostWei, finalContentHash }) {
   const robotWallet = new ethers.Wallet(robotPrivateKey, provider);
-  const robotAddress = await robotWallet.getAddress();
-  const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, robotWallet);
   
+  // 💡 LABOJUMS: Izmantojam NonceManager automātiskai nonce apstrādei vienā servera instancē
+  const managedSigner = new ethers.NonceManager(robotWallet);
+  const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, managedSigner);
+  
+  const robotAddress = await managedSigner.getAddress();
   console.log(`🤖 Finalize robot (${robotAddress}): calling finalizeMint...`);
   
-  const finalizeTx = await contractWithSigner.finalizeMint(
-    wallet, 
-    fullMetadataUri, 
-    storageCostWei || 0, 
-    finalContentHash
-  );
-  console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
-  await finalizeTx.wait();
-  console.log('🤖 ✅ Mint finalized! NFT created with metadata URI and content hash.');
+  const maxRetries = 3;
+  let attempt = 0;
+
+  // 💡 LABOJUMS: Retry cikls, lai novērstu "nonce too low" kļūdas, ja nāk vairāki minti vienlaicīgi
+  while (attempt < maxRetries) {
+    try {
+      attempt++;
+      const tx = await contractWithSigner.finalizeMint(
+        wallet, 
+        fullMetadataUri, 
+        BigInt(storageCostWei || 0), // 💡 LABOJUMS: Eksplicīts BigInt, lai novērstu ethers v6 tipu kļūdas
+        finalContentHash
+      );
+      
+      console.log(`🤖 Finalize tx sent (Attempt ${attempt})! Hash: ${tx.hash}`);
+      await tx.wait();
+      console.log('🤖 ✅ Mint finalized! NFT created with metadata URI and content hash.');
+      return; // Darījums veiksmīgs, izejam no cikla
+      
+    } catch (error) {
+      console.warn(`⚠️ Attempt ${attempt} failed:`, error.shortMessage || error.message);
+      
+      // Pārbaudām, vai kļūda ir saistīta ar darījumu rindas (nonce) sadursmi
+      const isNonceError = error.message.includes('nonce') || 
+                           error.code === 'NONCE_EXPIRED' || 
+                           error.code === 'REPLACEMENT_UNDERPRICED';
+                           
+      if (isNonceError && attempt < maxRetries) {
+        console.log(`⏳ Retrying due to nonce conflict...`);
+        // Gaidām ilgāk ar katru mēģinājumu (Exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+        // Atiestatām piesaistīto NonceManager, lai tas paņem svaigāko nonce no tīkla
+        managedSigner.reset();
+      } else {
+        // Ja kļūda ir cita (piem., out of gas vai revert) vai beigušies mēģinājumi, metam tālāk
+        throw error;
+      }
+    }
+  }
 }
 
 /**
@@ -102,7 +135,7 @@ async function purchaseStorageCredits(provider, storageKey, costWei) {
   }
 }
 
-// 🎯 GALVENĀ FUNKCIJA (Cognitive Complexity tagad: ~9 no 15)
+// 🎯 GALVENĀ FUNKCIJA
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -150,7 +183,6 @@ export async function onRequestPost(context) {
       ? contentHash
       : ethers.ZeroHash;
 
-    // 💡 LABOJUMS: Zarošanās pārcelta uz apakšfunkciju, atgriežot pilno sarakstu neskartu
     const fullMetadataUri = parseMetadataUri(metadataUri);
 
     const CONTRACT_ADDRESS = env.CONTRACT_ADDRESS;
