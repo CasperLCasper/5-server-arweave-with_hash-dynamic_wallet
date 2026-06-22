@@ -127,9 +127,6 @@ const App = Object.assign({}, AppState, {
     setButtonLoading(UI.generateNFTBtn, true);
     showWarning('⚠️ Do not close this tab until minting is complete and you have saved the ZIP file with your NFT files!', true);
 
-    // =============================================================
-    // 🔥 LABOJUMS 1: FIKSĒJAM DATUS PIRMS TĪKLU MAIŅAS UN SAKĀRTOŠANAS
-    // =============================================================
     const snapshotEthBalance = this.ethBalance ? this.ethBalance.toString() : "0";
     const snapshotTxCount = this.txCount ? this.txCount.toString() : "0";
     const snapshotTokenCount = this.tokens ? this.tokens.filter(t => !t.isNFT).length.toString() : "0";
@@ -178,7 +175,6 @@ const App = Object.assign({}, AppState, {
         return;
       }
       
-      // 🔥 LABOJUMS 2: Sagatavojam unikālu attēla nosaukumu
       const imageFileName = `snapshot_${Date.now()}.png`;
       const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
       const imageHash = await calculateHashFromBlob(imageBlob);
@@ -204,7 +200,6 @@ const App = Object.assign({}, AppState, {
           setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 15000);
         });
         
-        // 🔥 LABOJUMS 3: Nosakām pārlūka reālo video paplašinājumu un izveidojam unikālu nosaukumu
         const videoExt = videoBlob.type === 'video/mp4' ? 'mp4' : 'webm';
         videoFileName = `video_${Date.now()}.${videoExt}`;
         videoFile = new File([videoBlob], videoFileName, { type: videoBlob.type });
@@ -238,7 +233,6 @@ const App = Object.assign({}, AppState, {
         tokenId: n.tokenId
       }));
 
-      // Pagaidu contentHash — balstīts uz hash vērtībām, kas nemainās
       const tempContentHash = ethers.keccak256(
         ethers.concat([
           ethers.toUtf8Bytes('WalletVisualizer'),
@@ -351,13 +345,10 @@ const App = Object.assign({}, AppState, {
           body: nftFormData
         });
         
+        // 🆕 IZŅEMTS cancelMint izsaukums — cleanup robots apstrādās automātiski
         if (!serverRes.ok) {
-          console.error('Upload failed, cancelling mint...');
-          await apiFetch('/api/cancel-mint', {
-            method: 'POST',
-            body: JSON.stringify({ wallet: this.account })
-          });
-          throw new Error(`Arweave upload failed. Your deposit has been refunded.`);
+          console.error('Upload failed — refund will be processed automatically');
+          throw new Error(`Arweave upload failed. Your deposit will be refunded automatically.`);
         }
         
         serverData = await serverRes.json();
@@ -378,14 +369,11 @@ const App = Object.assign({}, AppState, {
       const storageCostWei = serverData.storage?.costWei || "0";
       const storageCostEth = serverData.storage?.costEth || "0";
       
-      // -----------------------------------------------------------------
-      // 5. SOLIS MODIFICĒTS: IEVADĀM UNIKĀLOS NOSAUKUMUS LOKĀLAJĀ METADATA
-      // -----------------------------------------------------------------
       const localMetadata = {
         name: "Wallet Visualization NFT",
         description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
-        image: imageFileName,        // 🔥 LABOJUMS 4: Lokālais unikālais attēla nosaukums
-        animation_url: videoFileName, // 🔥 LABOJUMS 5: Lokālais unikālais video nosaukums (ar pareizu paplašinājumu)
+        image: imageFileName,
+        animation_url: videoFileName,
         attributes: [
           { trait_type: "Balance Amount", value: snapshotEthBalance },
           { trait_type: "Native Token", value: nativeTokenSymbol },
@@ -420,18 +408,15 @@ const App = Object.assign({}, AppState, {
         showToast('✅ Metadata uploaded to Arweave!', 'success');
       } catch (metaError) {
         console.error('Metadata upload failed:', metaError);
-        await apiFetch('/api/cancel-mint', {
-          method: 'POST',
-          body: JSON.stringify({ wallet: this.account })
-        });
-        showToast('❌ Failed to upload metadata. Deposit refunded.', 'error');
+        // 🆕 IZŅEMTS cancelMint izsaukums — cleanup robots apstrādās automātiski
+        showToast('❌ Failed to upload metadata. Deposit will be refunded automatically.', 'error');
         showWarning('', false);
         setButtonLoading(UI.generateNFTBtn, false);
         return;
       }
       
       // ==========================================
-      // 6. finalizeMint — SERVERIS PABEIDZ AR LOKĀLĀ FAILA HAŠU
+      // 6. finalizeMint — SERVERIS PABEIDZ
       // ==========================================
       const metadataUri = `${ARWEAVE_GATEWAY}${metaId}`;
       
@@ -452,18 +437,18 @@ const App = Object.assign({}, AppState, {
         showToast('✅ NFT finalized on blockchain!', 'success');
       } catch (finalizeError) {
         console.error('Finalize failed:', finalizeError);
-        showToast('❌ Finalize failed. Contact support.', 'error');
+        // 🆕 IZŅEMTS cancelMint izsaukums — cleanup robots apstrādās automātiski
+        showToast('❌ Finalize failed. Refund will be processed automatically.', 'error');
       }
       
       // ==========================================
-      // 7. ZIP — SAGLABĀJAM TĪRO LOKĀLO JSON VERSIJU Ar UNIKĀLIEM FAILU NOSAUKUMIEM
+      // 7. ZIP — SAGLABĀJAM
       // ==========================================
       const metadataBlob = new Blob([localMetadataString], { type: 'application/json' });
       const metadataFileName = `metadata_${Date.now()}.json`;
       
       showToast('💾 Saving all files as ZIP...', 'info');
       
-      // 🔥 LABOJUMS 6: Iepakojam ZIP failā unikālos nosaukumus, kas sakrīt ar json saturu
       const completeFiles = [
         { blob: imageBlob, filename: imageFileName },
         { blob: metadataBlob, filename: metadataFileName },
@@ -506,8 +491,8 @@ const App = Object.assign({}, AppState, {
         userMessage = '🛑 Transaction was cancelled in your wallet.';
       } else if (error.message?.includes('insufficient funds')) {
         userMessage = '💰 Insufficient funds. Please add ETH to your wallet and try again.';
-      } else if (error.message?.includes('deposit has been refunded')) {
-        userMessage = '📤 Upload failed. Your deposit has been refunded.';
+      } else if (error.message?.includes('deposit has been refunded') || error.message?.includes('refunded automatically')) {
+        userMessage = '📤 Upload failed. Your deposit will be refunded automatically.';
       }
       
       showToast('❌ ' + userMessage, 'error');
@@ -665,19 +650,9 @@ const App = Object.assign({}, AppState, {
     const closeBtn = document.querySelector(".close-modal");
 
     if (aboutBtn && modal && closeBtn) {
-      aboutBtn.addEventListener("click", () => {
-        modal.style.display = "block";
-      });
-
-      closeBtn.addEventListener("click", () => {
-        modal.style.display = "none";
-      });
-
-      window.addEventListener("click", (event) => {
-        if (event.target === modal) {
-          modal.style.display = "none";
-        }
-      });
+      aboutBtn.addEventListener("click", () => { modal.style.display = "block"; });
+      closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+      window.addEventListener("click", (event) => { if (event.target === modal) modal.style.display = "none"; });
     } else {
       console.warn("⚠️ About modal elements were not found in the DOM.");
     }
@@ -685,9 +660,7 @@ const App = Object.assign({}, AppState, {
     window.addEventListener('resize', () => resizeCanvas(this));
     
     if (window.ethereum) {
-      window.ethereum.on('chainChanged', () => {
-        this.resetApp();
-      });
+      window.ethereum.on('chainChanged', () => { this.resetApp(); });
     }
     
     window.LOW_POWER_MODE = LOW_POWER_MODE;
