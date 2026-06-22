@@ -10,8 +10,7 @@ export const ARWEAVE_GATEWAY = "https://arweave.net/";
 export const CONTRACT_ABI = [
   "function mintPrice() view returns (uint256)",
   "function robotFee() view returns (uint256)",
-  "function storageGasReserve() view returns (uint256)",
-  "function MAX_STORAGE_COST() view returns (uint256)"
+  "function storageGasReserve() view returns (uint256)"
 ];
 
 const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
