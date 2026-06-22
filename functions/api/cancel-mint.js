@@ -2,6 +2,7 @@
 import { ethers } from 'ethers';
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
+import { clearPendingTrack } from "./cleanup-pending.js";
 
 const WALLET_NFT_ABI = [
   "function cancelMint(address wallet) external",
@@ -60,9 +61,8 @@ export async function onRequestPost(context) {
     }
 
     const provider = new ethers.JsonRpcProvider(ALCHEMY_RPC_URL);
-    
-    // 1. Pārbauda, vai lietotājam ir aktīvs PendingMint
     const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, provider);
+    
     let pendingMint;
     try {
       pendingMint = await contract.getPendingMint(wallet);
@@ -82,7 +82,6 @@ export async function onRequestPost(context) {
     console.log('  User wallet:', wallet);
     console.log('  Pending deposit (ETH):', ethers.formatEther(pendingMint.deposit));
 
-    // 2. Izsauc cancelMint ar ROBOT_PRIVATE_KEY (owner)
     const robotWallet = new ethers.Wallet(ROBOT_PRIVATE_KEY, provider);
     const robotAddress = await robotWallet.getAddress();
     const contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotWallet);
@@ -93,7 +92,9 @@ export async function onRequestPost(context) {
       const cancelTx = await contractWithSigner.cancelMint(wallet);
       console.log(`🤖 Cancel tx sent! Hash: ${cancelTx.hash}`);
       
-      // ✅ `cancelTx.wait()` ir izņemts. Atgriežam atbildi uzreiz pēc nosūtīšanas.
+      // 🆕 Notīra cleanup izsekošanu
+      clearPendingTrack(wallet);
+      
       return new Response(JSON.stringify({
         success: true,
         message: 'Transaction submitted successfully to the network',
