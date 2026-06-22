@@ -8,7 +8,10 @@ import { getRpcUrl } from './chains.js';
 export const ARWEAVE_GATEWAY = "https://arweave.net/";
 
 export const CONTRACT_ABI = [
-  "function mintPrice() view returns (uint256)"
+  "function mintPrice() view returns (uint256)",
+  "function robotFee() view returns (uint256)",
+  "function storageGasReserve() view returns (uint256)",
+  "function MAX_STORAGE_COST() view returns (uint256)"
 ];
 
 const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -19,14 +22,8 @@ export const VIZ_LOW_POWER_MODE = isMobile && (hasLowMemory || hasFewCores);
 export const LOW_POWER_MODE = VIZ_LOW_POWER_MODE;
 
 const PARTICLE_CONFIG = VIZ_LOW_POWER_MODE
-  ? {
-      MAX_PARTICLES: 100,
-      CONNECTION_DISTANCE: 80
-    }
-  : {
-      MAX_PARTICLES: 250,
-      CONNECTION_DISTANCE: 100
-    };
+  ? { MAX_PARTICLES: 100, CONNECTION_DISTANCE: 80 }
+  : { MAX_PARTICLES: 250, CONNECTION_DISTANCE: 100 };
 
 export const MAX_PARTICLES = PARTICLE_CONFIG.MAX_PARTICLES;
 export const CONNECTION_DISTANCE = PARTICLE_CONFIG.CONNECTION_DISTANCE;
@@ -46,20 +43,13 @@ export async function getMintProvider() {
     _providerPromise = null;
   }
 
-  if (_providerPromise) {
-    return _providerPromise;
-  }
+  if (_providerPromise) return _providerPromise;
 
   _providerPromise = (async () => {
     try {
-      const provider = new ethers.JsonRpcProvider(
-        getRpcUrl('baseSepolia')
-      );
-      
+      const provider = new ethers.JsonRpcProvider(getRpcUrl('baseSepolia'));
       await provider.getBlockNumber();
-      
       _mintProvider = provider;
-      
       return provider;
     } finally {
       _providerPromise = null;
