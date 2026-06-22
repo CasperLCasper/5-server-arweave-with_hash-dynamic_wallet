@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
 import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
+import { clearPendingTrack } from "./cleanup-pending.js";
 
 const WALLET_NFT_ABI = [
   "function finalizeMint(address wallet, string calldata metadataUri, uint256 storageCostWei, bytes32 finalContentHash) external",
@@ -11,138 +12,65 @@ const WALLET_NFT_ABI = [
   "function mintPrice() public view returns (uint256)"
 ];
 
-/**
- * Palīgfunkcija: Apstrādā un formatē URI tikai tad, ja tas ir parasts string/CID, saglabājot JSON neskartu
- */
 function parseMetadataUri(uri) {
   const trimmed = uri.trim();
-  
-  // Ja tas ir pilns JSON objekts, nekavējoties atgriežam oriģinālu bez izmaiņām
-  if (trimmed.startsWith('{')) {
-    return trimmed;
-  }
-
-  if (trimmed.startsWith('Qm') || trimmed.startsWith('baf')) {
-    return `https://arweave.net/${trimmed}`;
-  }
-  if (trimmed.startsWith('ipfs://')) {
-    return `https://arweave.net/${trimmed.substring(7)}`;
-  }
-  if (trimmed.startsWith('ar://')) {
-    return `https://arweave.net/${trimmed.substring(5)}`;
-  }
+  if (trimmed.startsWith('{')) return trimmed;
+  if (trimmed.startsWith('Qm') || trimmed.startsWith('baf')) return `https://arweave.net/${trimmed}`;
+  if (trimmed.startsWith('ipfs://')) return `https://arweave.net/${trimmed.substring(7)}`;
+  if (trimmed.startsWith('ar://')) return `https://arweave.net/${trimmed.substring(5)}`;
   return trimmed;
 }
 
-/**
- * Palīgfunkcija: Izpilda līguma finalizeMint darījumu tīkla pusē ar Nonce un Retry pārvaldību
- */
 async function executeRobotFinalize(provider, robotPrivateKey, contractAddress, { wallet, fullMetadataUri, storageCostWei, finalContentHash }) {
   const robotWallet = new ethers.Wallet(robotPrivateKey, provider);
+  const robotAddress = await robotWallet.getAddress();
+  const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, robotWallet);
   
-  // 💡 LABOJUMS: Izmantojam NonceManager automātiskai nonce apstrādei vienā servera instancē
-  const managedSigner = new ethers.NonceManager(robotWallet);
-  const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, managedSigner);
-  
-  const robotAddress = await managedSigner.getAddress();
   console.log(`🤖 Finalize robot (${robotAddress}): calling finalizeMint...`);
   
-  const maxRetries = 3;
-  let attempt = 0;
-
-  // 💡 LABOJUMS: Retry cikls, lai novērstu "nonce too low" kļūdas, ja nāk vairāki minti vienlaicīgi
-  while (attempt < maxRetries) {
-    try {
-      attempt++;
-      const tx = await contractWithSigner.finalizeMint(
-        wallet, 
-        fullMetadataUri, 
-        BigInt(storageCostWei || 0), // 💡 LABOJUMS: Eksplicīts BigInt, lai novērstu ethers v6 tipu kļūdas
-        finalContentHash
-      );
-      
-      console.log(`🤖 Finalize tx sent (Attempt ${attempt})! Hash: ${tx.hash}`);
-      await tx.wait();
-      console.log('🤖 ✅ Mint finalized! NFT created with metadata URI and content hash.');
-      return; // Darījums veiksmīgs, izejam no cikla
-      
-    } catch (error) {
-      console.warn(`⚠️ Attempt ${attempt} failed:`, error.shortMessage || error.message);
-      
-      // Pārbaudām, vai kļūda ir saistīta ar darījumu rindas (nonce) sadursmi
-      const isNonceError = error.message.includes('nonce') || 
-                           error.code === 'NONCE_EXPIRED' || 
-                           error.code === 'REPLACEMENT_UNDERPRICED';
-                           
-      if (isNonceError && attempt < maxRetries) {
-        console.log(`⏳ Retrying due to nonce conflict...`);
-        // Gaidām ilgāk ar katru mēģinājumu (Exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
-        // Atiestatām piesaistīto NonceManager, lai tas paņem svaigāko nonce no tīkla
-        managedSigner.reset();
-      } else {
-        // Ja kļūda ir cita (piem., out of gas vai revert) vai beigušies mēģinājumi, metam tālāk
-        throw error;
-      }
-    }
-  }
+  const finalizeTx = await contractWithSigner.finalizeMint(
+    wallet, fullMetadataUri, storageCostWei || 0, finalContentHash
+  );
+  console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
+  await finalizeTx.wait();
+  console.log('🤖 ✅ Mint finalized! NFT created.');
 }
 
-/**
- * Palīgfunkcija: Iepērk Arweave/Turbo glabātuves kredītus
- */
 async function purchaseStorageCredits(provider, storageKey, costWei) {
   if (!storageKey || !costWei) return;
-
   try {
     const storageWallet = new ethers.Wallet(storageKey, provider);
     const storageAddress = await storageWallet.getAddress();
     const storageBalance = await provider.getBalance(storageAddress);
-    
-    console.log(`🤖 Webhook robot: storage balance: ${ethers.formatEther(storageBalance)} ETH`);
-
+    console.log(`🤖 Storage balance: ${ethers.formatEther(storageBalance)} ETH`);
     const storageCostBigInt = BigInt(costWei);
     const gasReserve = ethers.parseEther("0.0001");
-    
     if (storageBalance < storageCostBigInt + gasReserve) {
-      console.log(`🤖 Webhook robot: not enough funds for credits.`);
+      console.log('🤖 Not enough funds for credits.');
       return;
     }
-
-    console.log(`🤖 Webhook robot: buying credits for ${ethers.formatEther(costWei)} ETH...`);
-    
+    console.log(`🤖 Buying credits for ${ethers.formatEther(costWei)} ETH...`);
     const signer = new EthereumSigner(storageKey);
     const turbo = TurboFactory.authenticated({
-      signer,
-      token: 'base-eth',
-      gatewayUrl: 'https://sepolia.base.org',
+      signer, token: 'base-eth', gatewayUrl: 'https://sepolia.base.org',
       paymentServiceConfig: { url: 'https://payment.ardrive.dev' },
       uploadServiceConfig: { url: 'https://upload.ardrive.dev' }
     });
-
     const { winc: before } = await turbo.getBalance();
     await turbo.topUpWithTokens({ tokenAmount: costWei });
     const { winc: after } = await turbo.getBalance();
-    
-    console.log('🤖 Webhook robot: ✅ Credits purchased!', {
-      ethSpent: ethers.formatEther(costWei),
-      creditsBefore: before.toString(),
-      creditsAfter: after.toString(),
-      added: (after - before).toString()
-    });
+    console.log('🤖 ✅ Credits purchased!', { added: (after - before).toString() });
   } catch (creditError) {
     console.warn('⚠️ Credit purchase failed:', creditError.message);
   }
 }
 
-// 🎯 GALVENĀ FUNKCIJA
 export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
     const user = await requireAuth(request, env);
     if (user instanceof Response) return user;
-    
     if (!user?.address) {
       return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
         status: 401, headers: { "Content-Type": "application/json" }
@@ -160,7 +88,6 @@ export async function onRequestPost(context) {
     try {
       body = await request.json();
     } catch (e) {
-      console.warn('⚠️ Neizdevās parsēt JSON pieprasījumu:', e.message);
       return new Response(JSON.stringify({ success: false, error: 'Invalid JSON' }), {
         status: 400, headers: { "Content-Type": "application/json" }
       });
@@ -180,8 +107,7 @@ export async function onRequestPost(context) {
     }
 
     const finalContentHash = (contentHash && /^0x[0-9a-fA-F]{64}$/.test(contentHash))
-      ? contentHash
-      : ethers.ZeroHash;
+      ? contentHash : ethers.ZeroHash;
 
     const fullMetadataUri = parseMetadataUri(metadataUri);
 
@@ -226,6 +152,10 @@ export async function onRequestPost(context) {
       await executeRobotFinalize(provider, ROBOT_PRIVATE_KEY, CONTRACT_ADDRESS, {
         wallet, fullMetadataUri, storageCostWei, finalContentHash
       });
+      
+      // 🆕 Notīra cleanup izsekošanu pēc veiksmīga finalize
+      clearPendingTrack(wallet);
+      
     } catch (finalizeError) {
       console.error('❌ Finalize failed:', finalizeError.message);
       return new Response(JSON.stringify({ success: false, error: 'Finalize failed: ' + finalizeError.message }), {
@@ -236,11 +166,8 @@ export async function onRequestPost(context) {
     await purchaseStorageCredits(provider, ARWEAVE_STORAGE_KEY, storageCostWei);
 
     return new Response(JSON.stringify({
-      success: true,
-      wallet,
-      metadataUri: fullMetadataUri,
-      storageCostWei: storageCostWei || "0",
-      contentHash: finalContentHash
+      success: true, wallet, metadataUri: fullMetadataUri,
+      storageCostWei: storageCostWei || "0", contentHash: finalContentHash
     }), {
       status: 200, headers: { "Content-Type": "application/json" }
     });
