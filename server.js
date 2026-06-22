@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { startCleanupCron } from './cron-runner.js';
 
 if (!globalThis.File) {
     const { File, Blob } = await import('node:buffer');
@@ -14,7 +15,6 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// 🔒 DROŠĪBA: Pilnībā atslēdzam X-Powered-By galveni pašā saknē, lai nopludinātu Express versiju
 app.disable('x-powered-by');
 
 const PORT = process.env.PORT || 3000;
@@ -22,7 +22,6 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-// Pārtveram multipart datus pirms Express tos aiztiek
 app.use((req, res, next) => {
     if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
         let data = [];
@@ -36,7 +35,6 @@ app.use((req, res, next) => {
     }
 });
 
-// --- DROŠĪBAS MIDDLWARE (CSP) ---
 app.use((req, res, next) => {
     res.setHeader(
         'Content-Security-Policy',
@@ -51,7 +49,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- CLOUDFLARE -> EXPRESS ADAPTERIS ---
 function createCloudflareAdapter(handler) {
     return async (req, res) => {
         try {
@@ -69,35 +66,27 @@ function createCloudflareAdapter(handler) {
                     json: async () => req.body,
                     formData: async () => {
                         const storage = {};
-                        
                         if (req.rawBody) {
                             const contentType = req.headers['content-type'];
                             const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
-                            
                             if (boundaryMatch) {
                                 const boundary = '--' + (boundaryMatch[1] || boundaryMatch[2]);
                                 const buffer = req.rawBody;
-                                
                                 let offset = 0;
                                 while ((offset = buffer.indexOf(boundary, offset)) !== -1) {
                                     offset += boundary.length;
                                     if (buffer[offset] === 0x2d && buffer[offset + 1] === 0x2d) break;
                                     offset += 2;
-                                    
                                     const nextBoundary = buffer.indexOf(boundary, offset);
                                     if (nextBoundary === -1) break;
-                                    
                                     const part = buffer.subarray(offset, nextBoundary);
                                     const headerEnd = part.indexOf('\r\n\r\n');
-                                    
                                     if (headerEnd !== -1) {
                                         const headerStr = part.subarray(0, headerEnd).toString('utf-8');
                                         const body = part.subarray(headerEnd + 4, part.length - 2);
-                                        
                                         const nameMatch = headerStr.match(/name="([^"]+)"/);
                                         const filenameMatch = headerStr.match(/filename="([^"]+)"/);
                                         const typeMatch = headerStr.match(/Content-Type:\s*([^\s\r\n]+)/);
-                                        
                                         if (nameMatch) {
                                             const key = nameMatch[1];
                                             if (filenameMatch) {
@@ -113,17 +102,10 @@ function createCloudflareAdapter(handler) {
                                 }
                             }
                         }
-                        
                         if (req.body) {
-                            Object.keys(req.body).forEach(key => {
-                                storage[key] = req.body[key];
-                            });
+                            Object.keys(req.body).forEach(key => { storage[key] = req.body[key]; });
                         }
-                        
-                        return {
-                            get: (key) => storage[key] || null,
-                            has: (key) => key in storage
-                        };
+                        return { get: (key) => storage[key] || null, has: (key) => key in storage };
                     },
                     url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
                     headers: headersEmulator
@@ -135,13 +117,11 @@ function createCloudflareAdapter(handler) {
 
             if (cfResponse && (cfResponse instanceof Response || typeof cfResponse.json === 'function')) {
                 res.status(cfResponse.status || 200);
-                
                 if (cfResponse.headers && typeof cfResponse.headers.forEach === 'function') {
                     cfResponse.headers.forEach((value, key) => res.setHeader(key, value));
                 } else {
                     res.setHeader('Content-Type', 'application/json');
                 }
-
                 try {
                     const jsonBuffer = await cfResponse.json();
                     return res.json(jsonBuffer);
@@ -150,11 +130,9 @@ function createCloudflareAdapter(handler) {
                     return res.send(textBuffer);
                 }
             } 
-            
             if (cfResponse && typeof cfResponse === 'object') {
                 return res.json(cfResponse);
             }
-
             res.status(200).end();
         } catch (err) {
             console.error(`Kļūda adapterī izpildot maršrutu:`, err);
@@ -167,34 +145,28 @@ const apiDir = path.join(__dirname, 'functions', 'api');
 
 async function walkRoutes(dir, routePrefix = '/api') {
     if (!fs.existsSync(dir)) return;
-
     const files = fs.readdirSync(dir);
     for (const file of files) {
         const fullPath = path.join(dir, file);
         const stat = fs.statSync(fullPath);
-
         if (stat.isDirectory()) {
             await walkRoutes(fullPath, `${routePrefix}/${file}`);
         } else if (file.endsWith('.js')) {
             const routeName = file === 'index.js' ? '' : `/${file.slice(0, -3)}`;
             const fullRoute = `${routePrefix}${routeName}`.toLowerCase();
-            
             try {
                 const fileUrl = new URL(`file://${fullPath}`).href;
                 const module = await import(fileUrl);
-                
                 const getHandler = module.onRequestGet || module.onRequestGET || module.onrequestget;
                 const postHandler = module.onRequestPost || module.onRequestPOST || module.onrequestpost;
                 const genericHandler = module.onRequest || module.onRequestGeneric;
                 const defaultHandler = module.default;
-
                 if (getHandler) app.get(fullRoute, createCloudflareAdapter(getHandler));
                 if (postHandler) app.post(fullRoute, createCloudflareAdapter(postHandler));
                 if (genericHandler) app.all(fullRoute, createCloudflareAdapter(genericHandler));
                 if (defaultHandler && !getHandler && !postHandler && !genericHandler) {
                     app.all(fullRoute, defaultHandler);
                 }
-
                 console.log(`Reģistrēts maršruts: ${fullRoute}`);
             } catch (e) {
                 console.error(`Kļūda ielādējot maršrutu ${fullRoute}:`, e);
@@ -213,4 +185,5 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Serveris aktīvs uz porta ${PORT}`);
+    startCleanupCron();
 });
