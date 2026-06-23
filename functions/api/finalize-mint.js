@@ -4,6 +4,7 @@ import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
 import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 import { clearPendingTrack } from "./cleanup-pending.js";
+import { getRobotSigner } from "../_lib/robot.js"; // 🚀 Importējam vienoto NonceManager!
 
 const WALLET_NFT_ABI = [
   "function finalizeMint(address wallet, string calldata metadataUri, uint256 storageCostWei, bytes32 finalContentHash) external",
@@ -21,20 +22,24 @@ function parseMetadataUri(uri) {
   return trimmed;
 }
 
-async function executeRobotFinalize(provider, robotPrivateKey, contractAddress, { wallet, fullMetadataUri, storageCostWei, finalContentHash }) {
-  const robotWallet = new ethers.Wallet(robotPrivateKey, provider);
-  const robotAddress = await robotWallet.getAddress();
-  const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, robotWallet);
+// 🚀 Funkcija tagad pieņem `robotSigner` (kas sevī ietver NonceManager), nevis pašu privāto atslēgu
+async function executeRobotFinalize(robotSigner, contractAddress, { wallet, fullMetadataUri, storageCostWei, finalContentHash }) {
+  const robotAddress = await robotSigner.getAddress();
+  const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, robotSigner);
   
   console.log(`🤖 Finalize robot (${robotAddress}): calling finalizeMint...`);
   
-  // 🚀 FIKSĒTS GĀZES LIMITS — izlaiž estimateGas
+  // 🚀 PIEVIENOTS FIKSĒTS GAS LIMIT (250,000), lai izlaistu estimateGas kļūdas
   const finalizeTx = await contractWithSigner.finalizeMint(
     wallet, fullMetadataUri, storageCostWei || 0, finalContentHash,
     { gasLimit: 250000 }
   );
+  
   console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
-  await finalizeTx.wait();
+  
+  // ⚠️ UZMANĪBU: Ja stresa testos 100 lietotājiem API sāk izmest "Timeout" (504 kļūdu), 
+  // tad noņem šo rindu (await finalizeTx.wait();). Tas ļaus API uzreiz atbildēt frontendam, negaidot bloka apstiprinājumu.
+  await finalizeTx.wait(); 
   console.log('🤖 ✅ Mint finalized! NFT created.');
 }
 
@@ -125,6 +130,10 @@ export async function onRequestPost(context) {
     }
 
     const provider = new ethers.JsonRpcProvider(ALCHEMY_RPC_URL);
+    
+    // 🚀 IZSAUCAM VIENOTO ROBOTA SIGNERU!
+    const robotSigner = getRobotSigner(env, provider);
+    
     const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, provider);
     
     let pendingMint;
@@ -151,7 +160,8 @@ export async function onRequestPost(context) {
     });
 
     try {
-      await executeRobotFinalize(provider, ROBOT_PRIVATE_KEY, CONTRACT_ADDRESS, {
+      // 🚀 Padodam mūsu gudro `robotSigner` tālāk funkcijai
+      await executeRobotFinalize(robotSigner, CONTRACT_ADDRESS, {
         wallet, fullMetadataUri, storageCostWei, finalContentHash
       });
       
