@@ -28,8 +28,10 @@ async function executeRobotFinalize(provider, robotPrivateKey, contractAddress, 
   
   console.log(`🤖 Finalize robot (${robotAddress}): calling finalizeMint...`);
   
+  // 🚀 FIKSĒTS GĀZES LIMITS — izlaiž estimateGas
   const finalizeTx = await contractWithSigner.finalizeMint(
-    wallet, fullMetadataUri, storageCostWei || 0, finalContentHash
+    wallet, fullMetadataUri, storageCostWei || 0, finalContentHash,
+    { gasLimit: 250000 }
   );
   console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
   await finalizeTx.wait();
@@ -153,7 +155,6 @@ export async function onRequestPost(context) {
         wallet, fullMetadataUri, storageCostWei, finalContentHash
       });
       
-      // 🆕 Notīra cleanup izsekošanu pēc veiksmīga finalize
       clearPendingTrack(wallet);
       
     } catch (finalizeError) {
