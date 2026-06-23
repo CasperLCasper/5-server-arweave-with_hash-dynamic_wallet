@@ -9,6 +9,9 @@ const WALLET_NFT_ABI = [
   "function getPendingMint(address wallet) external view returns (tuple(bytes32 imageHash, bytes32 videoHash, bytes32 contentHash, uint256 nonce, uint256 deposit, bool exists))"
 ];
 
+// 🧠 GLOBĀLAIS SKOPS: Šis mainīgais dzīvos Render.com RAM atmiņā visu laiku, kamēr Node.js process ir aktīvs.
+let globalNonceManager = null;
+
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -61,6 +64,15 @@ export async function onRequestPost(context) {
     }
 
     const provider = new ethers.JsonRpcProvider(ALCHEMY_RPC_URL);
+    
+    // 🛠️ INICIALIZĒJAM NONCE MANAGER TIKAI VIENREIZ
+    if (!globalNonceManager) {
+      console.log("🛠️ Inicializējam globālo NonceManager cancel-mint failam...");
+      const robotWallet = new ethers.Wallet(ROBOT_PRIVATE_KEY, provider);
+      globalNonceManager = new ethers.NonceManager(robotWallet);
+    }
+
+    // Līgums tikai lasīšanai (pending mint pārbaudei)
     const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, provider);
     
     let pendingMint;
@@ -82,13 +94,13 @@ export async function onRequestPost(context) {
     console.log('  User wallet:', wallet);
     console.log('  Pending deposit (ETH):', ethers.formatEther(pendingMint.deposit));
 
-    const robotWallet = new ethers.Wallet(ROBOT_PRIVATE_KEY, provider);
-    const robotAddress = await robotWallet.getAddress();
-    const contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotWallet);
+    // 🔗 PIEVIENOJAM LĪGUMAM GLOBĀLO NONCE MANAGER
+    const contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, globalNonceManager);
     
-    console.log(`🤖 Cancel robot (${robotAddress}): calling cancelMint...`);
+    console.log(`🤖 Cancel robot: calling cancelMint...`);
     
     try {
+      // Ethers.js NonceManager tagad visu rindošanas maģiju izdarīs tavā vietā!
       const cancelTx = await contractWithSigner.cancelMint(wallet);
       console.log(`🤖 Cancel tx sent! Hash: ${cancelTx.hash}`);
       
