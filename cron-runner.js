@@ -9,11 +9,12 @@ export function startCleanupCron() {
   interval = setInterval(async () => {
     try {
       const port = process.env.PORT || 3000;
-      const res = await fetch(`http://localhost:${port}/api/cleanup-pending`);
+      // Izmanto 127.0.0.1 Docker videi (nevis localhost)
+      const res = await fetch(`http://127.0.0.1:${port}/api/cleanup-pending`);
       const data = await res.json();
       if (data.cancelled > 0) console.log(`🧹 Cleanup: ${data.cancelled} expired mints refunded`);
     } catch (e) {
-      // Klusām — negribam pārpludināt logus
+      console.error('🧹 Cleanup cron error:', e.message);
     }
   }, 5 * 60 * 1000);
 }
