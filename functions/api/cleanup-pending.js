@@ -2,6 +2,7 @@
 // CLEANUP ROBOT — Skenē līgumu, atceļ pending mintus > 30 min
 // Izmanto vienoto NonceManager caur getRobotSigner
 // Eksportē executePendingCleanup() priekš cron-runner.js
+// Izmanto līguma timestamp — nav atkarīgs no servera atmiņas
 // ============================================================
 import { ethers } from 'ethers';
 import { getRobotSigner } from "../_lib/robot.js";
@@ -12,16 +13,12 @@ const WALLET_NFT_ABI = [
   "function cancelMint(address) external",
 ];
 
-const pendingSince = new Map();
-
 export function trackPendingMint(walletAddr) {
-  if (!pendingSince.has(walletAddr)) {
-    pendingSince.set(walletAddr, Date.now());
-  }
+  // Saglabāts atpakaļsaderībai — vairs netiek izmantots cleanup loģikā
 }
 
 export function clearPendingTrack(walletAddr) {
-  pendingSince.delete(walletAddr);
+  // Saglabāts atpakaļsaderībai
 }
 
 export async function executePendingCleanup(env) {
@@ -46,26 +43,24 @@ export async function executePendingCleanup(env) {
   console.log(`🧹 Cleanup: checking ${allAddresses.length} on-chain pending mints...`);
 
   const results = { checked: allAddresses.length, cancelled: 0, errors: 0 };
+  const nowSec = Math.floor(Date.now() / 1000);
 
   for (const addr of allAddresses) {
     try {
       const p = await contract.getPendingMint(addr);
       
-      if (!p.exists) {
-        pendingSince.delete(addr);
-        continue;
-      }
+      if (!p.exists) continue;
 
-      const startTime = pendingSince.get(addr) || Date.now();
-      const elapsed = Date.now() - startTime;
-      const elapsedMin = (elapsed / 60000).toFixed(1);
+      const elapsedSec = nowSec - Number(p.timestamp);
+      const elapsedMin = (elapsedSec / 60).toFixed(1);
 
-      if (elapsed > MAX_MIN * 60000) {
+      if (elapsedSec > MAX_MIN * 60) {
         const tx = await contract.cancelMint(addr);
         await tx.wait();
-        pendingSince.delete(addr);
         results.cancelled++;
         console.log(`🧹 Refunded ${ethers.formatEther(p.deposit)} ETH to ${addr.substring(0,10)}... (${elapsedMin} min)`);
+      } else {
+        console.log(`  ⏳ ${addr.substring(0,10)}... waiting (${elapsedMin} min)`);
       }
     } catch (e) {
       results.errors++;
