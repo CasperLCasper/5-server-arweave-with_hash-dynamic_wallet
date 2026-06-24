@@ -63,14 +63,14 @@ export async function onRequestPost(context) {
     console.log('  User wallet:', wallet);
     console.log('  Pending deposit (ETH):', ethers.formatEther(pendingMint.deposit));
 
+    // 🚀 Izmanto vienoto NonceManager
     const robotSigner = getRobotSigner(env, provider);
     const contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotSigner);
     
     console.log(`🤖 Cancel robot: calling cancelMint...`);
     
     try {
-      // 🚀 Fiksēts gasLimit — izlaiž estimateGas
-      const cancelTx = await contractWithSigner.cancelMint(wallet, { gasLimit: 120000 });
+      const cancelTx = await contractWithSigner.cancelMint(wallet);
       console.log(`🤖 Cancel tx sent! Hash: ${cancelTx.hash}`);
       clearPendingTrack(wallet);
       
