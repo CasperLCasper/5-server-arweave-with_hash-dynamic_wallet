@@ -1,6 +1,7 @@
 // ============================================================
 // CLEANUP ROBOT — Skenē līgumu, atceļ pending mintus > 30 min
 // Izmanto vienoto NonceManager caur getRobotSigner
+// Eksportē executePendingCleanup() priekš cron-runner.js
 // Izsauc: GET /api/cleanup-pending
 // ============================================================
 import { ethers } from 'ethers';
@@ -24,18 +25,15 @@ export function clearPendingTrack(walletAddr) {
   pendingSince.delete(walletAddr);
 }
 
-export async function onRequestGet(context) {
-  const { env } = context;
+export async function executePendingCleanup(env) {
   const { CONTRACT_ADDRESS, ROBOT_PRIVATE_KEY, ALCHEMY_RPC_URL } = env;
   const MAX_MIN = parseInt(env.MAX_PENDING_MIN || '30');
 
   if (!CONTRACT_ADDRESS || !ROBOT_PRIVATE_KEY || !ALCHEMY_RPC_URL) {
-    return new Response(JSON.stringify({ error: 'Config missing' }), { status: 500 });
+    return { checked: 0, cancelled: 0, errors: 0 };
   }
 
   const provider = new ethers.JsonRpcProvider(ALCHEMY_RPC_URL);
-  
-  // 🚀 VIENOTAIS NonceManager — nekādu nonce konfliktu!
   const robotSigner = getRobotSigner(env, provider);
   const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotSigner);
 
@@ -43,14 +41,12 @@ export async function onRequestGet(context) {
   try {
     allAddresses = await contract.getAllPendingAddresses();
   } catch (e) {
-    return new Response(JSON.stringify({ success: false, error: 'Cannot read addresses: ' + e.message }), {
-      status: 500, headers: { 'Content-Type': 'application/json' }
-    });
+    return { checked: 0, cancelled: 0, errors: 1 };
   }
 
   console.log(`🧹 Cleanup: checking ${allAddresses.length} on-chain pending mints...`);
 
-  const results = { checked: allAddresses.length, cancelled: 0, errors: 0, details: [] };
+  const results = { checked: allAddresses.length, cancelled: 0, errors: 0 };
 
   for (const addr of allAddresses) {
     try {
@@ -58,7 +54,6 @@ export async function onRequestGet(context) {
       
       if (!p.exists) {
         pendingSince.delete(addr);
-        results.details.push({ wallet: addr.substring(0, 10), status: 'already_cleared' });
         continue;
       }
 
@@ -67,29 +62,32 @@ export async function onRequestGet(context) {
       const elapsedMin = (elapsed / 60000).toFixed(1);
 
       if (elapsed > MAX_MIN * 60000) {
+        // 🚀 BEZ gasLimit — izmanto estimateGas
         const tx = await contract.cancelMint(addr);
         await tx.wait();
         pendingSince.delete(addr);
         results.cancelled++;
-        results.details.push({
-          wallet: addr.substring(0, 10),
-          status: 'cancelled',
-          txHash: tx.hash.substring(0, 20),
-          elapsedMin,
-          refundEth: ethers.formatEther(p.deposit)
-        });
         console.log(`🧹 Refunded ${ethers.formatEther(p.deposit)} ETH to ${addr.substring(0,10)}... (${elapsedMin} min)`);
-      } else {
-        results.details.push({ wallet: addr.substring(0, 10), status: 'waiting', elapsedMin });
       }
     } catch (e) {
       results.errors++;
-      results.details.push({ wallet: addr.substring(0, 10), status: 'error', error: e.message?.substring(0, 60) });
     }
   }
 
   console.log(`🧹 Cleanup done: ${results.checked} checked, ${results.cancelled} cancelled, ${results.errors} errors`);
+  return results;
+}
 
+export async function onRequestGet(context) {
+  const { env, request } = context;
+  
+  const authHeader = request.headers.get('Authorization');
+  if (!env.CLEANUP_API_KEY || authHeader !== `Bearer ${env.CLEANUP_API_KEY}`) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  }
+  
+  const results = await executePendingCleanup(env);
+  
   return new Response(JSON.stringify({ success: true, timestamp: new Date().toISOString(), ...results }), {
     status: 200, headers: { 'Content-Type': 'application/json' }
   });
