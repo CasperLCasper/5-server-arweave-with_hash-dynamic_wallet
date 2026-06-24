@@ -1,8 +1,6 @@
-// functions/api/request-mint.js
 import { ethers } from 'ethers';
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
-import { trackPendingMint } from "./cleanup-pending.js";
 
 const WALLET_NFT_ABI = [
   "function requestMint(address wallet, bytes32 imageHash, bytes32 videoHash, bytes32 contentHash, uint256 nonceParam, bytes calldata signature) external payable",
@@ -102,6 +100,9 @@ export async function onRequestPost(context) {
     console.log('  Contract Address:', CONTRACT_ADDRESS);
     console.log('  Mint price (ETH):', ethers.formatEther(mintPrice));
     console.log('  Nonce:', currentNonce.toString());
+    console.log('  Image Hash:', finalImageHash);
+    console.log('  Video Hash:', finalVideoHash);
+    console.log('  Content Hash:', finalContentHash);
 
     if (serverAddress.toLowerCase() !== contractSigner.toLowerCase()) {
       console.error('🚨 Signer mismatch!');
@@ -114,6 +115,7 @@ export async function onRequestPost(context) {
       verifyingContract: CONTRACT_ADDRESS
     };
 
+    // EIP-712 BEZ metadataUri
     const types = {
       MintRequest: [
         { name: 'wallet', type: 'address' },
@@ -133,24 +135,30 @@ export async function onRequestPost(context) {
     };
 
     const signature = await serverWallet.signTypedData(domain, types, value);
+    console.log('  Generated Server Signature:', signature);
 
     const iface = new ethers.Interface(WALLET_NFT_ABI);
     const data = iface.encodeFunctionData('requestMint', [
-      wallet, finalImageHash, finalVideoHash, finalContentHash, currentNonce, signature
+      wallet, 
+      finalImageHash, 
+      finalVideoHash, 
+      finalContentHash, 
+      currentNonce, 
+      signature
     ]);
 
     let estimatedGas;
     try {
       estimatedGas = await provider.estimateGas({
-        from: wallet, to: CONTRACT_ADDRESS, data: data, value: mintPrice
+        from: wallet,
+        to: CONTRACT_ADDRESS,
+        data: data,
+        value: mintPrice
       });
       estimatedGas = (estimatedGas * 130n) / 100n;
     } catch (err) {
       estimatedGas = 380000n;
     }
-
-    // 🆕 Izseko pending mint — cleanup robots zinās, kad sākās
-    trackPendingMint(wallet);
 
     console.log('✅ REQUEST MINT PREPARED');
 
