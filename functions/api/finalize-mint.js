@@ -32,7 +32,7 @@ async function executeRobotFinalize(robotSigner, contractAddress, { wallet, full
   // 🚀 PIEVIENOTS FIKSĒTS GAS LIMIT (250,000), lai izlaistu estimateGas kļūdas
   const finalizeTx = await contractWithSigner.finalizeMint(
     wallet, fullMetadataUri, storageCostWei || 0, finalContentHash,
-    { gasLimit: 250000 }
+    { gasLimit: 1000000 }
   );
   
   console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
