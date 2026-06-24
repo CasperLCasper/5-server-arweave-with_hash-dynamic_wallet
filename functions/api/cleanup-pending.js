@@ -1,8 +1,10 @@
 // ============================================================
 // CLEANUP ROBOT — Skenē līgumu, atceļ pending mintus > 30 min
+// Izmanto vienoto NonceManager caur getRobotSigner
 // Izsauc: GET /api/cleanup-pending
 // ============================================================
 import { ethers } from 'ethers';
+import { getRobotSigner } from "../_lib/robot.js";
 
 const WALLET_NFT_ABI = [
   "function getAllPendingAddresses() view returns (address[])",
@@ -32,8 +34,10 @@ export async function onRequestGet(context) {
   }
 
   const provider = new ethers.JsonRpcProvider(ALCHEMY_RPC_URL);
-  const robot = new ethers.Wallet(ROBOT_PRIVATE_KEY, provider);
-  const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robot);
+  
+  // 🚀 VIENOTAIS NonceManager — nekādu nonce konfliktu!
+  const robotSigner = getRobotSigner(env, provider);
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotSigner);
 
   let allAddresses;
   try {
@@ -74,7 +78,7 @@ export async function onRequestGet(context) {
           elapsedMin,
           refundEth: ethers.formatEther(p.deposit)
         });
-        console.log(`🧹 Refunded ${ethers.formatEther(p.deposit)} ETH to ${addr.substring(0,10)}...`);
+        console.log(`🧹 Refunded ${ethers.formatEther(p.deposit)} ETH to ${addr.substring(0,10)}... (${elapsedMin} min)`);
       } else {
         results.details.push({ wallet: addr.substring(0, 10), status: 'waiting', elapsedMin });
       }
