@@ -2,7 +2,6 @@
 // CLEANUP ROBOT — Skenē līgumu, atceļ pending mintus > 30 min
 // Izmanto vienoto NonceManager caur getRobotSigner
 // Eksportē executePendingCleanup() priekš cron-runner.js
-// Izsauc: GET /api/cleanup-pending
 // ============================================================
 import { ethers } from 'ethers';
 import { getRobotSigner } from "../_lib/robot.js";
@@ -62,7 +61,6 @@ export async function executePendingCleanup(env) {
       const elapsedMin = (elapsed / 60000).toFixed(1);
 
       if (elapsed > MAX_MIN * 60000) {
-        // 🚀 BEZ gasLimit — izmanto estimateGas
         const tx = await contract.cancelMint(addr);
         await tx.wait();
         pendingSince.delete(addr);
@@ -76,19 +74,4 @@ export async function executePendingCleanup(env) {
 
   console.log(`🧹 Cleanup done: ${results.checked} checked, ${results.cancelled} cancelled, ${results.errors} errors`);
   return results;
-}
-
-export async function onRequestGet(context) {
-  const { env, request } = context;
-  
-  const authHeader = request.headers.get('Authorization');
-  if (!env.CLEANUP_API_KEY || authHeader !== `Bearer ${env.CLEANUP_API_KEY}`) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-  }
-  
-  const results = await executePendingCleanup(env);
-  
-  return new Response(JSON.stringify({ success: true, timestamp: new Date().toISOString(), ...results }), {
-    status: 200, headers: { 'Content-Type': 'application/json' }
-  });
 }
