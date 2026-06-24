@@ -22,16 +22,15 @@ function parseMetadataUri(uri) {
   return trimmed;
 }
 
+// 🚀 Tagad pieņem robotSigner, nevis provider+privateKey
 async function executeRobotFinalize(robotSigner, contractAddress, { wallet, fullMetadataUri, storageCostWei, finalContentHash }) {
   const robotAddress = await robotSigner.getAddress();
   const contractWithSigner = new ethers.Contract(contractAddress, WALLET_NFT_ABI, robotSigner);
   
   console.log(`🤖 Finalize robot (${robotAddress}): calling finalizeMint...`);
   
-  // 🚀 Fiksēts gasLimit — izlaiž estimateGas
   const finalizeTx = await contractWithSigner.finalizeMint(
-    wallet, fullMetadataUri, storageCostWei || 0, finalContentHash,
-    { gasLimit: 250000 }
+    wallet, fullMetadataUri, storageCostWei || 0, finalContentHash
   );
   console.log(`🤖 Finalize tx sent! Hash: ${finalizeTx.hash}`);
   await finalizeTx.wait();
@@ -123,6 +122,7 @@ export async function onRequestPost(context) {
     console.log('🔍 FINALIZE MINT DEBUG:', { wallet, metadataUri: fullMetadataUri, storageCostEth: ethers.formatEther(storageCostWei || "0"), contentHash: finalContentHash, deposit: ethers.formatEther(pendingMint.deposit) });
 
     try {
+      // 🚀 Izmanto vienoto NonceManager
       const robotSigner = getRobotSigner(env, provider);
       await executeRobotFinalize(robotSigner, CONTRACT_ADDRESS, { wallet, fullMetadataUri, storageCostWei, finalContentHash });
       clearPendingTrack(wallet);
