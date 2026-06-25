@@ -1,4 +1,4 @@
-// functions/api/cancel-mint.js
+// functions/api/cancel-mint.js — PIEVIENOTS RETRY
 import { ethers } from 'ethers';
 import { requireAuth } from "../_lib/auth.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
@@ -9,6 +9,8 @@ const WALLET_NFT_ABI = [
   "function cancelMint(address wallet) external",
   "function getPendingMint(address wallet) external view returns (tuple(bytes32 imageHash, bytes32 videoHash, bytes32 contentHash, uint256 nonce, uint256 deposit, bool exists))"
 ];
+
+const MAX_RETRIES = 5;
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -63,22 +65,36 @@ export async function onRequestPost(context) {
     console.log('  User wallet:', wallet);
     console.log('  Pending deposit (ETH):', ethers.formatEther(pendingMint.deposit));
 
-    // 🚀 Izmanto vienoto NonceManager
     const robotSigner = getRobotSigner(env, provider);
     const contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS, WALLET_NFT_ABI, robotSigner);
     
-    console.log(`🤖 Cancel robot: calling cancelMint...`);
-    
-    try {
-      const cancelTx = await contractWithSigner.cancelMint(wallet);
-      console.log(`🤖 Cancel tx sent! Hash: ${cancelTx.hash}`);
-      clearPendingTrack(wallet);
-      
-      return new Response(JSON.stringify({ success: true, message: 'Transaction submitted successfully to the network', txHash: cancelTx.hash, wallet: wallet, refundAmount: pendingMint.deposit.toString(), refundEth: ethers.formatEther(pendingMint.deposit) }), { status: 200, headers: { "Content-Type": "application/json" } });
-    } catch (cancelError) {
-      console.error('❌ Cancel failed:', cancelError.message);
-      return new Response(JSON.stringify({ success: false, error: 'Cancel failed: ' + cancelError.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    // 🚀 RETRY — līdz 5 mēģinājumiem ar pieaugošu pauzi
+    let lastError = null;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`🤖 Cancel robot: calling cancelMint (attempt ${attempt}/${MAX_RETRIES})...`);
+        const cancelTx = await contractWithSigner.cancelMint(wallet);
+        console.log(`🤖 Cancel tx sent! Hash: ${cancelTx.hash}`);
+        clearPendingTrack(wallet);
+        
+        return new Response(JSON.stringify({ success: true, message: 'Transaction submitted successfully', txHash: cancelTx.hash, wallet: wallet, refundAmount: pendingMint.deposit.toString(), refundEth: ethers.formatEther(pendingMint.deposit) }), { status: 200, headers: { "Content-Type": "application/json" } });
+      } catch (cancelError) {
+        lastError = cancelError;
+        const isNonceError = cancelError.message?.includes('nonce') || cancelError.code === 'NONCE_EXPIRED' || cancelError.code === 'REPLACEMENT_UNDERPRICED';
+        
+        if (isNonceError && attempt < MAX_RETRIES) {
+          console.warn(`⚠️ Nonce conflict, retrying (attempt ${attempt}/${MAX_RETRIES})...`);
+          await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, 2s, 3s, 4s pauze
+          robotSigner.reset(); // Atiestata nonce
+        } else {
+          throw cancelError; // Nav nonce kļūda vai beigušies mēģinājumi
+        }
+      }
     }
+    
+    console.error('❌ Cancel failed after ' + MAX_RETRIES + ' attempts:', lastError.message);
+    return new Response(JSON.stringify({ success: false, error: 'Cancel failed: ' + lastError.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    
   } catch (error) {
     console.error('💥 Cancel mint error:', error);
     return new Response(JSON.stringify({ success: false, error: 'Server error: ' + error.message }), { status: 500, headers: { "Content-Type": "application/json" } });
