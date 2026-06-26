@@ -25,7 +25,7 @@ export function clearPendingTrack(walletAddr) {
 
 export async function executePendingCleanup(env) {
   const { CONTRACT_ADDRESS, ROBOT_PRIVATE_KEY, ALCHEMY_RPC_URL } = env;
-  const MAX_MIN = parseInt(env.MAX_PENDING_MIN || '30');
+  const MAX_MIN = Number.parseInt(env.MAX_PENDING_MIN || '30');
 
   if (!CONTRACT_ADDRESS || !ROBOT_PRIVATE_KEY || !ALCHEMY_RPC_URL) {
     console.error("❌ Cleanup kļūda: Trūkst nepieciešamo vides mainīgo (env).");
