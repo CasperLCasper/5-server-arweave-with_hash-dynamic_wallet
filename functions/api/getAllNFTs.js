@@ -3,11 +3,13 @@ import { getOptionalUser } from "../_lib/auth.js";
 import { getCache, setCache } from "../_lib/cache.js";
 import { checkRateLimit } from "../_lib/rateLimit.js";
 
-// Chain konfigurācija paliek nemainīga, bet salabota uz aktīvo testnetu
+const MAX_PAGES = 5;
+
+// Chain konfigurācija
 const getChainConfig = (chain) => {
   const configs = {
     sepolia: { type: 'alchemy', network: 'eth-sepolia' },
-    mumbai: { type: 'alchemy', network: 'polygon-amoy' }, // SALABOTS: nomainīts uz polygon-amoy
+    mumbai: { type: 'alchemy', network: 'polygon-amoy' },
     bscTestnet: { type: 'bscscan', network: 'bsc-testnet' },
     arbitrumSepolia: { type: 'alchemy', network: 'arb-sepolia' },
     optimismSepolia: { type: 'alchemy', network: 'opt-sepolia' },
@@ -46,61 +48,113 @@ const getBSCScanNFTs = async (owner, apiKey) => {
   return Array.from(uniqueNFTs.values());
 };
 
-const MAX_PAGES = 5;
+// JSON Response palīgfunkcija
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
 
-// Izmantojam onRequestGet, lai apstrādātu tikai GET pieprasījumus
+// Validācijas funkcijas
+function getAccount(user, accountParam) {
+  const account = accountParam || (user?.address || null);
+  if (!account) {
+    return { error: "Missing account. Please provide it in query or log in." };
+  }
+  return { account };
+}
+
+function validateEthereumAddress(address) {
+  try {
+    return { address: ethers.getAddress(address) };
+  } catch {
+    return { error: "Invalid Ethereum address" };
+  }
+}
+
+// Rate limiting ar atslēgu
+async function checkRateLimitForKey(request, user, chain, env) {
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const rateKey = user ? `user_${user.address}_nfts_${chain}` : `ip_${ip}_nfts_${chain}`;
+  
+  if (!(await checkRateLimit({ key: rateKey }, env))) {
+    return false;
+  }
+  return true;
+}
+
+// Alchemy NFT iegūšana pa lapām
+async function fetchAlchemyNFTs(API_KEY, network, owner, contract) {
+  const allNFTs = [];
+  let pageKey = null;
+  
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const alchemyUrl = getAlchemyNFTUrl({
+      apiKey: API_KEY,
+      network,
+      owner,
+      contract,
+      pageKey
+    });
+
+    const response = await fetch(alchemyUrl);
+    if (!response.ok) break;
+    
+    const data = await response.json();
+    allNFTs.push(...(data?.ownedNfts || []));
+    
+    if (!data?.pageKey) break;
+    pageKey = data.pageKey;
+  }
+  
+  return allNFTs;
+}
+
+// NFT formatēšana
+function formatNFTs(nfts, chain) {
+  return nfts.map(nft => ({
+    contract: {
+      address: nft.contract?.address || "",
+      symbol: nft.contract?.symbol || "NFT"
+    },
+    id: {
+      tokenId: nft.id?.tokenId || ""
+    },
+    balance: 1,
+    chain
+  }));
+}
+
 export async function onRequestGet(context) {
-  let chain = 'sepolia'; 
+  const { request, env } = context;
+  let chain = 'sepolia';
 
   try {
-    const { request, env } = context;
-    
     const url = new URL(request.url);
     const accountParam = url.searchParams.get("account");
     const contract = url.searchParams.get("contract");
     chain = url.searchParams.get("chain") || 'sepolia';
 
+    // Autentifikācija un konta iegūšana
     const user = await getOptionalUser(request, env);
-    let account = accountParam || (user ? user.address : null); 
+    const { account, error: accountError } = getAccount(user, accountParam);
+    if (accountError) return jsonResponse({ error: accountError }, 400);
 
-    if (!account) {
-      return new Response(JSON.stringify({ error: "Missing account. Please provide it in query or log in." }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    let safeAccount;
-    try {
-      safeAccount = ethers.getAddress(account);
-    } catch {
-      return new Response(JSON.stringify({ error: "Invalid Ethereum address" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
+    // Adrešu validācija
+    const { address: safeAccount, error: addrError } = validateEthereumAddress(account);
+    if (addrError) return jsonResponse({ error: addrError }, 400);
 
     let safeContract = null;
     if (contract) {
-      try {
-        safeContract = ethers.getAddress(contract);
-      } catch {
-        return new Response(JSON.stringify({ error: "Invalid contract address" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" }
-        });
-      }
+      const { address: validatedContract, error: contractError } = validateEthereumAddress(contract);
+      if (contractError) return jsonResponse({ error: "Invalid contract address" }, 400);
+      safeContract = validatedContract;
     }
 
-    // Rate limiting ar await - tagad strādā arī ar Redis!
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    const rateKey = user ? `user_${user.address}_nfts_${chain}` : `ip_${ip}_nfts_${chain}`;
-
-    if (!(await checkRateLimit({ key: rateKey }, env))) {
-      return new Response(JSON.stringify({ error: "Too many requests" }), {
-        status: 429,
-        headers: { "Content-Type": "application/json" }
-      });
+    // Rate limiting
+    if (!(await checkRateLimitForKey(request, user, chain, env))) {
+      return jsonResponse({ error: "Too many requests" }, 429);
     }
 
     // Cache pārbaude
@@ -108,76 +162,31 @@ export async function onRequestGet(context) {
       ? `nfts_${safeAccount}_${safeContract}_${chain}`
       : `nfts_${safeAccount}_${chain}`;
 
-    // ✅ Asinhronais getCache ar await
     const cached = await getCache(cacheKey, env);
-    if (cached) {
-      return new Response(JSON.stringify(cached), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
+    if (cached) return jsonResponse(cached);
 
-    const API_KEY = env.ALCHEMY_API_KEY;
-    const BSCSCAN_API_KEY = env.BSCSCAN_API_KEY;
-    
+    // NFT iegūšana
     const chainConfig = getChainConfig(chain);
     let allNFTs = [];
 
     if (chainConfig.type === 'bscscan') {
-      allNFTs = await getBSCScanNFTs(safeAccount, BSCSCAN_API_KEY);
+      allNFTs = await getBSCScanNFTs(safeAccount, env.BSCSCAN_API_KEY);
     } else {
-      let pageKey = null;
-      for (let i = 0; i < MAX_PAGES; i++) {
-        const alchemyUrl = getAlchemyNFTUrl({
-          apiKey: API_KEY,
-          network: chainConfig.network,
-          owner: safeAccount,
-          contract: safeContract,
-          pageKey
-        });
-
-        const response = await fetch(alchemyUrl);
-        if (!response.ok) break;
-        
-        const data = await response.json();
-        const nfts = data?.ownedNfts || [];
-        allNFTs.push(...nfts);
-        
-        if (!data?.pageKey) break;
-        pageKey = data.pageKey;
-      }
+      allNFTs = await fetchAlchemyNFTs(env.ALCHEMY_API_KEY, chainConfig.network, safeAccount, safeContract);
     }
 
-    const formatted = allNFTs.map(nft => ({
-      contract: {
-        address: nft.contract?.address || "",
-        symbol: nft.contract?.symbol || "NFT"
-      },
-      id: {
-        tokenId: nft.id?.tokenId || ""
-      },
-      balance: 1,
-      chain: chain
-    }));
-
-    const result = { result: { nfts: formatted }, chain: chain };
+    // Rezultātu formatēšana un kešošana
+    const formatted = formatNFTs(allNFTs, chain);
+    const result = { result: { nfts: formatted }, chain };
     
-    // ✅ Asinhronais setCache ar await
     await setCache(cacheKey, result, env);
-
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonResponse(result);
 
   } catch (err) {
     console.error("NFT ERROR for chain:", chain, err);
-    return new Response(JSON.stringify({
+    return jsonResponse({
       error: "Failed to fetch NFTs",
       result: { nfts: [] }
-    }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    }, 500);
   }
 }
