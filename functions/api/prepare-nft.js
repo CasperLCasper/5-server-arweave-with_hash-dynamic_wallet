@@ -5,172 +5,243 @@ import { checkRateLimit } from "../_lib/rateLimit.js";
 import { TurboFactory, EthereumSigner } from '@ardrive/turbo-sdk';
 import { ethers } from 'ethers';
 import crypto from 'crypto';
+import axios from 'axios';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'video/mp4', 'video/webm'];
 const MAX_SIZE = 50 * 1024 * 1024;
+
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
+
+function validateFile(file, fieldName, isRequired = true) {
+  if (isRequired && (!file || !(file instanceof File))) {
+    return { error: `No ${fieldName} file provided` };
+  }
+  
+  if (!file) return { file: null };
+  
+  const fileType = file.type || (fieldName === 'image' ? 'image/png' : 'video/webm');
+  const fileName = file.name || (fieldName === 'image' ? 'snapshot.png' : 'video.webm');
+  const fileSize = file.size;
+
+  if (!ALLOWED_TYPES.includes(fileType)) {
+    return { error: `${fieldName.charAt(0).toUpperCase() + fieldName.slice(1)} type not allowed: ${fileType}` };
+  }
+  if (fileSize > MAX_SIZE) {
+    return { error: `${fieldName.charAt(0).toUpperCase() + fieldName.slice(1)} too large. Max 50MB` };
+  }
+
+  return { file: { fileRef: file, type: fileType, name: fileName, size: fileSize } };
+}
+
+async function fileToBufferWithHash(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const hash = '0x' + crypto.createHash('sha256').update(buffer).digest('hex');
+  return { buffer, hash };
+}
+
+function createTurboUploader(arweaveKey) {
+  const signer = new EthereumSigner(arweaveKey);
+  return TurboFactory.authenticated({
+    signer,
+    token: 'base-eth',
+    gatewayUrl: 'https://sepolia.base.org',
+    paymentServiceConfig: { url: 'https://payment.ardrive.dev' },
+    uploadServiceConfig: { url: 'https://upload.ardrive.dev' }
+  });
+}
+
+async function uploadFileToArweave(turbo, buffer, metadata, type) {
+  try {
+    console.log(`📤 Uploading ${type} to Arweave via Turbo...`);
+    const result = await turbo.upload({
+      data: buffer,
+      dataItemOpts: {
+        tags: [
+          { name: "Content-Type", value: metadata.mimeType },
+          { name: "App-Name", value: "WalletVisualizer-v2.0" },
+          { name: "User-Address", value: metadata.userAddress },
+          { name: "File-Hash", value: metadata.hash },
+          { name: "NFT-Asset-Type", value: type }
+        ]
+      }
+    });
+    
+    if (result?.id) {
+      console.log(`✅ ${type} uploaded to Arweave:`, result.id);
+      return { id: result.id, bytesUploaded: metadata.size };
+    }
+    
+    console.warn(`⚠️ Turbo SDK did not return TX ID for ${type}`);
+    return { error: `No TX ID returned for ${type}` };
+  } catch (error) {
+    console.warn(`⚠️ Arweave ${type} upload error:`, error.message);
+    return { error: error.message };
+  }
+}
+
+async function uploadToArweave(arweaveKey, imageData, videoData) {
+  let imageId = null, videoId = null, arweaveError = null;
+  let totalBytesUploaded = 0;
+  let storageCostWei = "0", storageCostEth = "0";
+
+  if (!arweaveKey) {
+    console.warn('⚠️ ARWEAVE_STORAGE_KEY not configured');
+    return { imageId, videoId, arweaveError: 'No ARWEAVE_STORAGE_KEY configured', totalBytesUploaded, storageCostWei, storageCostEth };
+  }
+
+  try {
+    const turbo = createTurboUploader(arweaveKey);
+
+    // Augšupielādē attēlu
+    const imageResult = await uploadFileToArweave(turbo, imageData.buffer, {
+      mimeType: imageData.type,
+      userAddress: imageData.userAddress,
+      hash: imageData.hash,
+      size: imageData.size
+    }, 'image');
+    
+    if (imageResult.id) {
+      imageId = imageResult.id;
+      totalBytesUploaded += imageData.size;
+    } else if (imageResult.error) {
+      arweaveError = imageResult.error;
+    }
+
+    // Augšupielādē video, ja pieejams
+    if (videoData) {
+      const videoResult = await uploadFileToArweave(turbo, videoData.buffer, {
+        mimeType: videoData.type,
+        userAddress: videoData.userAddress,
+        hash: videoData.hash,
+        size: videoData.size
+      }, 'video');
+      
+      if (videoResult.id) {
+        videoId = videoResult.id;
+        totalBytesUploaded += videoData.size;
+      }
+    }
+
+    // Aprēķina uzglabāšanas izmaksas
+    if (totalBytesUploaded > 0) {
+      try {
+        const { tokenPrice } = await turbo.getTokenPriceForBytes({ byteCount: totalBytesUploaded });
+        storageCostEth = tokenPrice.toString();
+        storageCostWei = ethers.parseEther(storageCostEth).toString();
+        console.log(`💰 Storage cost: ${storageCostEth} ETH for ${totalBytesUploaded} bytes`);
+      } catch (priceError) {
+        console.warn('⚠️ Could not calculate storage price:', priceError.message);
+      }
+    }
+  } catch (initError) {
+    console.warn('⚠️ Turbo initialization error:', initError.message);
+    arweaveError = initError.message;
+  }
+
+  return { imageId, videoId, arweaveError, totalBytesUploaded, storageCostWei, storageCostEth };
+}
+
+async function autoFinalizeMint(imageId, storageCostWei, userAddress, request) {
+  if (!imageId) return;
+
+  try {
+    console.log('🚀 Auto-finalizing mint after successful Arweave upload...');
+    
+    await axios.post(`${request.url.replace('/prepare-nft', '/finalize-mint')}`, {
+      wallet: userAddress,
+      metadataUri: `https://arweave.net/${imageId}`,
+      storageCostWei,
+      contentHash: ethers.ZeroHash
+    }, {
+      headers: { Authorization: request.headers.get('Authorization') || '' }
+    });
+    
+    console.log('✅ Auto-finalize request sent!');
+  } catch (finalizeError) {
+    console.warn('⚠️ Auto-finalize failed, will be picked up by cleanup robot:', finalizeError.message);
+  }
+}
 
 export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
+    // Auth validācija
     const user = await requireAuth(request, env);
     if (user instanceof Response) return user;
-    if (!user || !user.address) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+    if (!user?.address) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
+    // Rate limiting
     const rateKey = `prepare-nft:${user.address.toLowerCase()}`;
     if (!(await checkRateLimit({ key: rateKey, limit: 5, windowMs: 60000 }, env))) {
-      return new Response(JSON.stringify({ error: 'Too many requests. Try again later.' }), { status: 429, headers: { "Content-Type": "application/json" } });
+      return jsonResponse({ error: 'Too many requests. Try again later.' }, 429);
     }
 
+    // Form data apstrāde
     let formData;
-    try { formData = await request.formData(); } catch (e) {
-      return new Response(JSON.stringify({ error: "Invalid form data" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    try {
+      formData = await request.formData();
+    } catch (e) {
+      return jsonResponse({ error: "Invalid form data" }, 400);
     }
 
-    const imageFile = formData.get('image');
-    const videoFile = formData.get('video');
+    // Failu validācija
+    const { file: imageFile, error: imageError } = validateFile(formData.get('image'), 'image');
+    if (imageError) return jsonResponse({ error: imageError }, 400);
 
-    if (!imageFile || !(imageFile instanceof File)) {
-      return new Response(JSON.stringify({ error: 'No image file provided' }), { status: 400, headers: { "Content-Type": "application/json" } });
-    }
-
-    const imageType = imageFile.type || 'image/png';
-    const imageName = imageFile.name || 'snapshot.png';
-    const imageSize = imageFile.size;
-
-    if (!ALLOWED_TYPES.includes(imageType)) {
-      return new Response(JSON.stringify({ error: `Image type not allowed: ${imageType}` }), { status: 400, headers: { "Content-Type": "application/json" } });
-    }
-    if (imageSize > MAX_SIZE) {
-      return new Response(JSON.stringify({ error: 'Image too large. Max 50MB' }), { status: 400, headers: { "Content-Type": "application/json" } });
-    }
-
-    let videoBuffer = null, videoType = null, videoName = null, videoSize = null;
-
-    if (videoFile && videoFile instanceof File) {
-      videoType = videoFile.type || 'video/webm';
-      videoName = videoFile.name || 'video.webm';
-      videoSize = videoFile.size;
-
-      if (!ALLOWED_TYPES.includes(videoType)) {
-        return new Response(JSON.stringify({ error: `Video type not allowed: ${videoType}` }), { status: 400, headers: { "Content-Type": "application/json" } });
-      }
-      if (videoSize > MAX_SIZE) {
-        return new Response(JSON.stringify({ error: 'Video too large. Max 50MB' }), { status: 400, headers: { "Content-Type": "application/json" } });
-      }
-      const videoArrayBuffer = await videoFile.arrayBuffer();
-      videoBuffer = Buffer.from(videoArrayBuffer);
-    }
+    const { file: videoFile, error: videoError } = validateFile(formData.get('video'), 'video', false);
+    if (videoError) return jsonResponse({ error: videoError }, 400);
 
     console.log(`🚀 Processing NFT files for user ${user.address}...`);
 
-    const imageArrayBuffer = await imageFile.arrayBuffer();
-    const imageBuffer = Buffer.from(imageArrayBuffer);
-    const imageHash = '0x' + crypto.createHash('sha256').update(imageBuffer).digest('hex');
+    // Hash aprēķins
+    const { buffer: imageBuffer, hash: imageHash } = await fileToBufferWithHash(imageFile.fileRef);
     console.log('🔐 Image Hash:', imageHash);
 
-    let videoHash = null;
-    if (videoBuffer) {
-      videoHash = '0x' + crypto.createHash('sha256').update(videoBuffer).digest('hex');
+    let videoHash = null, videoBuffer = null;
+    if (videoFile) {
+      const result = await fileToBufferWithHash(videoFile.fileRef);
+      videoBuffer = result.buffer;
+      videoHash = result.hash;
       console.log('🔐 Video Hash:', videoHash);
     }
 
-    let imageId = null, videoId = null, arweaveError = null;
-    let totalBytesUploaded = 0;
-    let storageCostWei = "0", storageCostEth = "0";
+    // Arweave augšupielāde
+    const { imageId, videoId, arweaveError, totalBytesUploaded, storageCostWei, storageCostEth } = 
+      await uploadToArweave(
+        env.ARWEAVE_STORAGE_KEY,
+        { buffer: imageBuffer, type: imageFile.type, userAddress: user.address.toLowerCase(), hash: imageHash, size: imageFile.size },
+        videoFile ? { buffer: videoBuffer, type: videoFile.type, userAddress: user.address.toLowerCase(), hash: videoHash, size: videoFile.size } : null
+      );
 
-    if (env.ARWEAVE_STORAGE_KEY) {
-      try {
-        const signer = new EthereumSigner(env.ARWEAVE_STORAGE_KEY);
-        const turbo = TurboFactory.authenticated({
-          signer, token: 'base-eth', gatewayUrl: 'https://sepolia.base.org',
-          paymentServiceConfig: { url: 'https://payment.ardrive.dev' },
-          uploadServiceConfig: { url: 'https://upload.ardrive.dev' }
-        });
-
-        try {
-          console.log('📤 Uploading image to Arweave via Turbo...');
-          const imageResult = await turbo.upload({
-            data: imageBuffer,
-            dataItemOpts: { tags: [
-              { name: "Content-Type", value: imageType }, { name: "App-Name", value: "WalletVisualizer-v2.0" },
-              { name: "User-Address", value: user.address.toLowerCase() }, { name: "File-Hash", value: imageHash }, { name: "NFT-Asset-Type", value: "image" }
-            ]}
-          });
-          imageId = imageResult?.id;
-          if (imageId) { console.log('✅ Image uploaded to Arweave:', imageId); totalBytesUploaded += imageSize; }
-          else { console.warn('⚠️ Turbo SDK did not return TX ID for image'); arweaveError = 'No TX ID returned for image'; }
-        } catch (imageError) { console.warn('⚠️ Arweave image upload error:', imageError.message); arweaveError = imageError.message; }
-
-        if (videoBuffer) {
-          try {
-            console.log('📤 Uploading video to Arweave via Turbo...');
-            const videoResult = await turbo.upload({
-              data: videoBuffer,
-              dataItemOpts: { tags: [
-                { name: "Content-Type", value: videoType }, { name: "App-Name", value: "WalletVisualizer-v2.0" },
-                { name: "User-Address", value: user.address.toLowerCase() }, { name: "File-Hash", value: videoHash }, { name: "NFT-Asset-Type", value: "video" }
-              ]}
-            });
-            videoId = videoResult?.id;
-            if (videoId) { console.log('✅ Video uploaded to Arweave:', videoId); totalBytesUploaded += videoSize; }
-            else { console.warn('⚠️ Turbo SDK did not return TX ID for video'); }
-          } catch (videoError) { console.warn('⚠️ Arweave video upload error:', videoError.message); }
-        }
-
-        if (totalBytesUploaded > 0) {
-          try {
-            const { tokenPrice } = await turbo.getTokenPriceForBytes({ byteCount: totalBytesUploaded });
-            storageCostEth = tokenPrice.toString();
-            storageCostWei = ethers.parseEther(storageCostEth).toString();
-            console.log(`💰 Storage cost: ${storageCostEth} ETH (${storageCostWei} wei) for ${totalBytesUploaded} bytes`);
-          } catch (priceError) { console.warn('⚠️ Could not calculate storage price:', priceError.message); }
-        }
-      } catch (initError) { console.warn('⚠️ Turbo initialization error:', initError.message); arweaveError = initError.message; }
-    } else {
-      arweaveError = 'No ARWEAVE_STORAGE_KEY configured';
-      console.warn('⚠️ ARWEAVE_STORAGE_KEY not configured - files saved locally only');
-    }
-
+    // Auto-finalize
     const arweaveSuccess = !!(imageId || videoId);
-
-    // 🚀 JAUNS: Ja Arweave veiksmīgs, AUTOMĀTISKI finalizē mintu
-    if (arweaveSuccess && imageId) {
-      try {
-        console.log('🚀 Auto-finalizing mint after successful Arweave upload...');
-        const metadataUri = `https://arweave.net/${imageId}`;
-        const contentHash = ethers.ZeroHash;
-        
-        await axios.post(`${request.url.replace('/prepare-nft', '/finalize-mint')}`, {
-          wallet: user.address,
-          metadataUri: metadataUri,
-          storageCostWei: storageCostWei,
-          contentHash: contentHash
-        }, {
-          headers: { Authorization: request.headers.get('Authorization') || '' }
-        });
-        console.log('✅ Auto-finalize request sent!');
-      } catch (finalizeError) {
-        console.warn('⚠️ Auto-finalize failed, will be picked up by cleanup robot:', finalizeError.message);
-      }
+    if (arweaveSuccess) {
+      await autoFinalizeMint(imageId, storageCostWei, user.address, request);
     }
 
+    // Atbildes sagatavošana
     const responseData = {
       success: true,
-      image: { hash: imageHash, id: imageId || null, fileName: imageName, mimeType: imageType, size: imageSize },
-      video: videoBuffer ? { hash: videoHash, id: videoId || null, fileName: videoName, mimeType: videoType, size: videoSize } : null,
+      image: { hash: imageHash, id: imageId || null, fileName: imageFile.name, mimeType: imageFile.type, size: imageFile.size },
+      video: videoFile ? { hash: videoHash, id: videoId || null, fileName: videoFile.name, mimeType: videoFile.type, size: videoFile.size } : null,
       arweave: { success: arweaveSuccess, error: arweaveError },
       storage: { bytesUploaded: totalBytesUploaded, costWei: storageCostWei, costEth: storageCostEth }
     };
 
     console.log(`✅ NFT preparation complete! Image hash: ${imageHash}`);
-
-    return new Response(JSON.stringify(responseData), { status: 200, headers: { "Content-Type": "application/json" } });
+    return jsonResponse(responseData);
 
   } catch (error) {
     console.error('💥 prepare-nft error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return jsonResponse({ error: error.message }, 500);
   }
 }
