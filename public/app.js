@@ -265,20 +265,15 @@ const App = Object.assign({}, AppState, {
     
     this.showInfo = previousShowInfo;
     
-    // 2. APRĒĶINA PAGAIDU CONTENT HASH (priekš requestMint)
     const tempContentHash = ethers.keccak256(
       ethers.concat([
         ethers.toUtf8Bytes('WalletVisualizer'),
-        imageHash,
-        videoHash,
-        ethers.toUtf8Bytes(this.account)
+        imageHash, videoHash, ethers.toUtf8Bytes(this.account)
       ])
     );
     
-    // 3. PĀRSLĒDZAS UZ BASE SEPOLIA UN VEIC requestMint (LIETOTĀJS MAKSĀ)
     showToast('🔄 Switching to Base...', 'info');
     await switchToMintChain();
-    
     await new Promise(resolve => setTimeout(resolve, 400));
     
     this.provider = new ethers.BrowserProvider(window.ethereum);
@@ -312,21 +307,13 @@ const App = Object.assign({}, AppState, {
       }
     }
     
-    // ==========================================
-    // 4. requestMint — LIETOTĀJS MAKSĀ DEPOZĪTU
-    // ==========================================
     showToast('📝 Requesting mint reservation...', 'info');
     
     let requestData;
     try {
       const requestRes = await apiFetch('/api/request-mint', {
         method: 'POST',
-        body: JSON.stringify({
-          wallet: this.account,
-          imageHash: imageHash,
-          videoHash: videoHash,
-          contentHash: tempContentHash
-        })
+        body: JSON.stringify({ wallet: this.account, imageHash, videoHash, contentHash: tempContentHash })
       });
       requestData = await requestRes.json();
     } catch (apiError) {
@@ -339,13 +326,6 @@ const App = Object.assign({}, AppState, {
     const txValue = BigInt(requestData.transaction.value);
     const txGasLimit = BigInt(requestData.transaction.gasLimit);
     
-    console.log('📤 Sending requestMint transaction:', {
-      to: requestData.transaction.to,
-      valueWei: txValue.toString(),
-      valueEth: ethers.formatEther(txValue),
-      gasLimit: txGasLimit.toString()
-    });
-
     showToast('✍️ Please sign the transaction in your wallet...', 'info');
     const tx = await this.signer.sendTransaction({
       to: requestData.transaction.to,
@@ -358,9 +338,6 @@ const App = Object.assign({}, AppState, {
     await tx.wait();
     showToast('✅ Deposit confirmed!', 'success');
     
-    // ==========================================
-    // 5. TAGAD AUGŠUPIELĀDĒ ARWEAVE (pēc maksājuma)
-    // ==========================================
     showToast('📤 Uploading to Arweave...', 'info');
     
     const nftFormData = new FormData();
@@ -373,16 +350,10 @@ const App = Object.assign({}, AppState, {
     let serverData;
     try {
       const serverRes = await fetch('/api/prepare-nft', {
-        method: 'POST',
-        headers: reqHeaders,
-        body: nftFormData
+        method: 'POST', headers: reqHeaders, body: nftFormData
       });
       
-      if (!serverRes.ok) {
-        console.error('Upload failed — refund will be processed automatically');
-        throw new Error(`Arweave upload failed. Your deposit will be refunded automatically.`);
-      }
-      
+      if (!serverRes.ok) throw new Error('Arweave upload failed. Your deposit will be refunded automatically.');
       serverData = await serverRes.json();
       if (!serverData.success) throw new Error(serverData.error || 'Arweave processing failed');
     } catch (uploadError) {
@@ -393,6 +364,24 @@ const App = Object.assign({}, AppState, {
       return;
     }
     
+    const mintResult = await this._finalizeMintAndSave(
+      serverData, imageBlob, videoBlob, imageHash, imageFileName, videoFileName,
+      snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount,
+      nativeTokenSymbol, tokenList, nftList, tx, txValue
+    );
+    
+    if (!mintResult) return;
+    
+    showToast('🔄 Refreshing view...', 'info');
+    await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    this.provider = new ethers.BrowserProvider(window.ethereum);
+    this.signer = await this.provider.getSigner();
+    this.account = await this.signer.getAddress();
+    await this.renderSnapshot(this.currentVizChain);
+  },
+
+  async _finalizeMintAndSave(serverData, imageBlob, videoBlob, imageHash, imageFileName, videoFileName, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList, tx, txValue) {
     console.log('✅ Server processed:', serverData);
     
     const gw = ARWEAVE_GATEWAY;
@@ -443,14 +432,10 @@ const App = Object.assign({}, AppState, {
       showToast('❌ Failed to upload metadata. Deposit will be refunded automatically.', 'error');
       showWarning('', false);
       setButtonLoading(UI.generateNFTBtn, false);
-      return;
+      return null;
     }
     
-    // ==========================================
-    // 6. finalizeMint — SERVERIS PABEIDZ
-    // ==========================================
     const metadataUri = `${ARWEAVE_GATEWAY}${metaId}`;
-    
     showToast('🔒 Finalizing your NFT on blockchain...', 'info');
     
     try {
@@ -471,25 +456,18 @@ const App = Object.assign({}, AppState, {
       showToast('❌ Finalize failed. Refund will be processed automatically.', 'error');
     }
     
-    // ==========================================
-    // 7. ZIP — SAGLABĀJAM
-    // ==========================================
     const metadataBlob = new Blob([localMetadataString], { type: 'application/json' });
     const metadataFileName = `metadata_${Date.now()}.json`;
     
     showToast('💾 Saving all files as ZIP...', 'info');
-    
-    const completeFiles = [
+    await downloadAllFiles([
       { blob: imageBlob, filename: imageFileName },
       { blob: metadataBlob, filename: metadataFileName },
       { blob: videoBlob, filename: videoFileName }
-    ];
-    await downloadAllFiles(completeFiles);
+    ]);
     showToast('✅ All files saved as ZIP!', 'success');
-    
     showWarning('', false);
     
-    // 8. REZULTĀTS
     const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
     alert(`✅ NFT minted!\n\n` +
       `Tx: ${tx.hash}\n` +
@@ -504,14 +482,7 @@ const App = Object.assign({}, AppState, {
       `\n${arweaveStatus} Arweave: ${arweaveSuccess ? 'OK' : 'Failed (files saved locally)'}` +
       `\n\n💾 All files saved as nft_assets_*.zip`);
     
-    // 9. ATJAUNO VIZUALIZĀCIJU
-    showToast('🔄 Refreshing view...', 'info');
-    await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
-    await new Promise(resolve => setTimeout(resolve, 500));
-    this.provider = new ethers.BrowserProvider(window.ethereum);
-    this.signer = await this.provider.getSigner();
-    this.account = await this.signer.getAddress();
-    await this.renderSnapshot(this.currentVizChain);
+    return { success: true };
   },
 
   async renderSnapshot(chain) {
