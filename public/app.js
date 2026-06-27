@@ -170,6 +170,21 @@ const App = Object.assign({}, AppState, {
     const snapshotTokenCount = this.tokens ? this.tokens.filter(t => !t.isNFT).length.toString() : "0";
     const snapshotNftCount = this.tokens ? this.tokens.filter(t => t.isNFT).length.toString() : "0";
     
+    const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
+    const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
+    const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
+    
+    const tokenList = this.tokens.filter(t => !t.isNFT).map(t => ({
+      symbol: t.symbol, address: t.address, balance: t.balance
+    }));
+    const nftList = this.tokens.filter(t => t.isNFT).map(n => ({
+      symbol: n.symbol, address: n.address, tokenId: n.tokenId
+    }));
+    
+    return this._mintNFT(previousShowInfo, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList);
+  },
+
+  async _mintNFT(previousShowInfo, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList) {
     // 0. ANTI-BOT
     showToast('✍️ Sign to continue...', 'info');
     
@@ -251,22 +266,6 @@ const App = Object.assign({}, AppState, {
     this.showInfo = previousShowInfo;
     
     // 2. APRĒĶINA PAGAIDU CONTENT HASH (priekš requestMint)
-    const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
-    const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
-    const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
-    
-    const tokenList = this.tokens.filter(t => !t.isNFT).map(t => ({
-      symbol: t.symbol,
-      address: t.address,
-      balance: t.balance
-    }));
-    
-    const nftList = this.tokens.filter(t => t.isNFT).map(n => ({
-      symbol: n.symbol,
-      address: n.address,
-      tokenId: n.tokenId
-    }));
-
     const tempContentHash = ethers.keccak256(
       ethers.concat([
         ethers.toUtf8Bytes('WalletVisualizer'),
