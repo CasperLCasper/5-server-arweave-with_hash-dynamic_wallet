@@ -107,18 +107,16 @@ export function updateNFTCenters(app) {
   });
 }
 
-export function drawFrame(app, frame, showTokensFrame) {
-  const addon = window.ADDON_STYLES[app.currentAddonStyle];
-  const W = app.canvasWidth || UI.canvas.width;
-  const H = app.canvasHeight || UI.canvas.height;
-  const ctx = app.ctx || UI.canvas.getContext('2d');
-  
+// ============================================
+// drawFrame PALĪGFUNKCIJAS
+// ============================================
+
+function clearCanvas(ctx, W, H) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
-  
-  const cx0 = W / 2, cy0 = H / 2;
-  const txSpeedFactor = Math.min(1 + Math.log(app.txCount + 1) / 15, 2.0);
-  
+}
+
+function updateParticlePositions(app, cx0, cy0, txSpeedFactor) {
   for (const p of app.particles) {
     let gravityDelta = { x: 0, y: 0 };
     for (const nft of app.nftCenters) {
@@ -139,7 +137,9 @@ export function drawFrame(app, frame, showTokensFrame) {
     p.x = cx0 + Math.cos(p.angle) * p.radius;
     p.y = cy0 + Math.sin(p.angle) * p.radius;
   }
-  
+}
+
+function buildLineGroups(app, frame, addon) {
   const thresholdSq = CONNECTION_DISTANCE * CONNECTION_DISTANCE;
   const lineGroups = new Map();
   
@@ -153,18 +153,27 @@ export function drawFrame(app, frame, showTokensFrame) {
       
       if (distSq < thresholdSq) {
         const avgBalance = (Math.min(p1.token.balance, 20) + Math.min(p2.token.balance, 20)) / 40;
-        let hue = (p1.hue + p2.hue) / 2 + frame * 0.3;
-        const modified = addon.connectionColorModifier(hue, 100, 70, 0.5, app.frameCount);
+        const modified = addon.connectionColorModifier(
+          (p1.hue + p2.hue) / 2 + frame * 0.3, 100, 70, 0.5, app.frameCount
+        );
         const colorKey = `${Math.floor(modified.hue / 30)}_${modified.sat}_${modified.light}`;
         
         if (!lineGroups.has(colorKey)) {
-          lineGroups.set(colorKey, { paths: [], color: `hsla(${modified.hue}, ${modified.sat}%, ${modified.light}%, ${modified.alpha})`, lineWidth: 1.2 + 1.8 * avgBalance });
+          lineGroups.set(colorKey, {
+            paths: [],
+            color: `hsla(${modified.hue}, ${modified.sat}%, ${modified.light}%, ${modified.alpha})`,
+            lineWidth: 1.2 + 1.8 * avgBalance
+          });
         }
         lineGroups.get(colorKey).paths.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
       }
     }
   }
   
+  return lineGroups;
+}
+
+function drawLineGroups(ctx, lineGroups) {
   for (const group of lineGroups.values()) {
     ctx.beginPath();
     ctx.lineWidth = group.lineWidth;
@@ -175,81 +184,125 @@ export function drawFrame(app, frame, showTokensFrame) {
     }
     ctx.stroke();
   }
-  
+}
+
+function drawParticleWithCache(ctx, app, p) {
+  let cached = p.cachedGradient;
+  if (!cached) {
+    cached = createParticleCache(app, p);
+    p.cachedGradient = cached;
+  }
+  ctx.drawImage(cached.canvas, p.x - cached.offset, p.y - cached.offset);
+}
+
+function drawParticleDirect(ctx, app, p, idx, addon) {
+  const modified = addon.particleColorModifier(p.hue, 100, 70, idx, p.balanceFactor, app.frameCount);
+  const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 2.2);
+  gradient.addColorStop(0, `hsla(${modified.hue}, ${modified.sat}%, ${modified.light + 12}%, 1)`);
+  gradient.addColorStop(0.6, `hsla(${modified.hue}, ${modified.sat}%, ${modified.light}%, 0.9)`);
+  gradient.addColorStop(1, `hsla(${modified.hue + 20}, ${modified.sat}%, ${modified.light - 15}%, 0.4)`);
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawParticles(ctx, app, addon) {
   const useCachedGradient = addon.particleColorModifier === null || addon.particleColorModifier === undefined;
   
   for (let idx = 0; idx < app.particles.length; idx++) {
     const p = app.particles[idx];
     
     if (useCachedGradient) {
-      let cached = p.cachedGradient;
-      if (!cached) {
-        cached = createParticleCache(app, p);
-        p.cachedGradient = cached;
-      }
-      ctx.drawImage(cached.canvas, p.x - cached.offset, p.y - cached.offset);
+      drawParticleWithCache(ctx, app, p);
     } else {
-      const modified = addon.particleColorModifier(p.hue, 100, 70, idx, p.balanceFactor, app.frameCount);
-      const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 2.2);
-      gradient.addColorStop(0, `hsla(${modified.hue}, ${modified.sat}%, ${modified.light + 12}%, 1)`);
-      gradient.addColorStop(0.6, `hsla(${modified.hue}, ${modified.sat}%, ${modified.light}%, 0.9)`);
-      gradient.addColorStop(1, `hsla(${modified.hue + 20}, ${modified.sat}%, ${modified.light - 15}%, 0.4)`);
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  
-  for (const nft of app.nftCenters) {
-    ctx.beginPath();
-    ctx.arc(nft.x, nft.y, 8, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255, 215, 0, 0.3)`;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(nft.x, nft.y, 4, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255, 215, 0, 0.8)`;
-    ctx.fill();
-  }
-  
-  if (!VIZ_LOW_POWER_MODE || frame % 2 === 0) {
-    addon.drawExtraEffects(ctx, W, H, frame, app.particles, cx0, cy0);
-  }
-  
-  // ✅ RĀDA TEKSTU TIKAI UZ CANVAS (dzīvajā skatā), NE uz ģenerētā attēla/video
-  if (showTokensFrame && app.showInfo) {
-    const currentChainConfig = VIZ_CHAINS[app.currentVizChain];
-    const isAmoy = app.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
-    const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
-
-    const isLoadingData = UI.renderBtn && UI.renderBtn.disabled;
-
-    ctx.fillStyle = '#0ff';
-    ctx.font = '20px Inter';
-    
-    if (isLoadingData) {
-      ctx.fillText(`${nativeTokenSymbol}: Loading data...`, 15, 70);
-    } else {
-      ctx.fillText(`${nativeTokenSymbol}: ${app.ethBalance.toFixed(4)}`, 15, 70);
-    }
-
-    ctx.font = '14px Inter';
-    ctx.fillStyle = addon.color;
-    ctx.fillText(`${addon.displayName} ACTIVE`, 15, 100);
-    ctx.font = '11px Inter';
-    ctx.fillStyle = '#888';
-    
-    if (isLoadingData) {
-      ctx.fillText(`Updating blockchain state, please wait...`, 15, 125);
-    } else {
-      const tokenCount = app.tokens.filter(t => !t.isNFT).length;
-      ctx.fillText(`TX: ${app.txCount} | Assets: ${app.tokens.length} (${tokenCount} tokens, ${app.nftCenters.length} NFTs)`, 15, 125);
+      drawParticleDirect(ctx, app, p, idx, addon);
     }
   }
 }
 
+function drawNFTCenters(ctx, app) {
+  for (const nft of app.nftCenters) {
+    ctx.beginPath();
+    ctx.arc(nft.x, nft.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(nft.x, nft.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.8)';
+    ctx.fill();
+  }
+}
+
+function drawInfoText(ctx, app, addon) {
+  const currentChainConfig = VIZ_CHAINS[app.currentVizChain];
+  const isAmoy = app.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
+  const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
+  const isLoadingData = UI.renderBtn && UI.renderBtn.disabled;
+
+  ctx.fillStyle = '#0ff';
+  ctx.font = '20px Inter';
+  
+  if (isLoadingData) {
+    ctx.fillText(`${nativeTokenSymbol}: Loading data...`, 15, 70);
+  } else {
+    ctx.fillText(`${nativeTokenSymbol}: ${app.ethBalance.toFixed(4)}`, 15, 70);
+  }
+
+  ctx.font = '14px Inter';
+  ctx.fillStyle = addon.color;
+  ctx.fillText(`${addon.displayName} ACTIVE`, 15, 100);
+  ctx.font = '11px Inter';
+  ctx.fillStyle = '#888';
+  
+  if (isLoadingData) {
+    ctx.fillText('Updating blockchain state, please wait...', 15, 125);
+  } else {
+    const tokenCount = app.tokens.filter(t => !t.isNFT).length;
+    ctx.fillText(`TX: ${app.txCount} | Assets: ${app.tokens.length} (${tokenCount} tokens, ${app.nftCenters.length} NFTs)`, 15, 125);
+  }
+}
+
+// ============================================
+// GALVENĀS FUNKCIJAS
+// ============================================
+
+export function drawFrame(app, frame, showTokensFrame) {
+  const addon = window.ADDON_STYLES[app.currentAddonStyle];
+  const W = app.canvasWidth || UI.canvas.width;
+  const H = app.canvasHeight || UI.canvas.height;
+  const ctx = app.ctx || UI.canvas.getContext('2d');
+  const cx0 = W / 2, cy0 = H / 2;
+  const txSpeedFactor = Math.min(1 + Math.log(app.txCount + 1) / 15, 2.0);
+  
+  // 1. Clear canvas
+  clearCanvas(ctx, W, H);
+  
+  // 2. Update particle positions
+  updateParticlePositions(app, cx0, cy0, txSpeedFactor);
+  
+  // 3. Build and draw connection lines
+  const lineGroups = buildLineGroups(app, frame, addon);
+  drawLineGroups(ctx, lineGroups);
+  
+  // 4. Draw particles
+  drawParticles(ctx, app, addon);
+  
+  // 5. Draw NFT centers
+  drawNFTCenters(ctx, app);
+  
+  // 6. Extra effects (low power mode check)
+  if (!VIZ_LOW_POWER_MODE || frame % 2 === 0) {
+    addon.drawExtraEffects(ctx, W, H, frame, app.particles, cx0, cy0);
+  }
+  
+  // 7. Info text
+  if (showTokensFrame && app.showInfo) {
+    drawInfoText(ctx, app, addon);
+  }
+}
+
 export function animate(app, frame = 0) { 
-  // ✅ Canvas skatā rāda tekstu (showInfo = true)
   drawFrame(app, frame, true); 
   app.animFrameId = requestAnimationFrame(() => animate(app, frame + 1)); 
 }
