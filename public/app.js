@@ -185,11 +185,8 @@ const App = Object.assign({}, AppState, {
   },
 
   async _mintNFT(previousShowInfo, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList) {
-    // 0. ANTI-BOT
     showToast('✍️ Sign to continue...', 'info');
-    
     const antiBotMessage = `Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${this.account}`;
-    
     try {
       await this.signer.signMessage(antiBotMessage);
     } catch (signError) {
@@ -204,111 +201,16 @@ const App = Object.assign({}, AppState, {
       return;
     }
     
-    // 1. UZŅEM ATTĒLU UN VIDEO (lokāli, neuploadē)
-    showToast('📸 Creating your NFT files...', 'info');
+    const mediaData = await this._captureMediaAndSwitch(previousShowInfo);
+    if (!mediaData) return;
     
-    let imageBlob;
-    try {
-      imageBlob = await new Promise((resolve, reject) => {
-        UI.canvas.toBlob((blob) => {
-          if (blob) resolve(blob);
-          else reject(new Error('Failed to create image'));
-        }, 'image/png');
-      });
-    } catch (imageError) {
-      console.error('Image creation failed:', imageError);
-      showToast('❌ Failed to create image. Cannot mint NFT.', 'error');
-      showWarning('', false);
-      this.showInfo = previousShowInfo;
-      setButtonLoading(UI.generateNFTBtn, false);
-      return;
-    }
-    
-    const imageFileName = `snapshot_${Date.now()}.png`;
-    const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
-    const imageHash = await calculateHashFromBlob(imageBlob);
-    
-    let videoBlob;
-    let videoFileName;
-    let videoFile;
-    let videoHash;
-    
-    try {
-      const stream = UI.canvas.captureStream(30);
-      videoBlob = await new Promise((resolve, reject) => {
-        let mimeType = 'video/webm';
-        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
-        const recorder = new MediaRecorder(stream, { mimeType });
-        const chunks = [];
-        
-        recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-        recorder.onerror = (event) => reject(event?.error || new Error('Recording failed'));
-        
-        recorder.start(1000);
-        setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 15000);
-      });
-      
-      const videoExt = videoBlob.type === 'video/mp4' ? 'mp4' : 'webm';
-      videoFileName = `video_${Date.now()}.${videoExt}`;
-      videoFile = new File([videoBlob], videoFileName, { type: videoBlob.type });
-      videoHash = await calculateHashFromBlob(videoBlob);
-      showToast('🎬 Video recorded!', 'success');
-    } catch (videoError) {
-      console.error('Video recording failed:', videoError);
-      showToast('❌ Failed to record video. Cannot mint NFT.', 'error');
-      showWarning('', false);
-      this.showInfo = previousShowInfo;
-      setButtonLoading(UI.generateNFTBtn, false);
-      return;
-    }
-    
-    this.showInfo = previousShowInfo;
+    const { imageHash, videoHash, imageFile, videoFile } = mediaData;
     
     const tempContentHash = ethers.keccak256(
-      ethers.concat([
-        ethers.toUtf8Bytes('WalletVisualizer'),
-        imageHash, videoHash, ethers.toUtf8Bytes(this.account)
-      ])
+      ethers.concat([ethers.toUtf8Bytes('WalletVisualizer'), imageHash, videoHash, ethers.toUtf8Bytes(this.account)])
     );
     
-    showToast('🔄 Switching to Base...', 'info');
-    await switchToMintChain();
-    await new Promise(resolve => setTimeout(resolve, 400));
-    
-    this.provider = new ethers.BrowserProvider(window.ethereum);
-    this.signer = await this.provider.getSigner();
-    this.account = await this.signer.getAddress();
-    
-    const loginSuccess = await login(this.signer, this.account);
-    if (!loginSuccess) {
-      showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
-      showWarning('', false);
-      setButtonLoading(UI.generateNFTBtn, false);
-      await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      this.provider = new ethers.BrowserProvider(window.ethereum);
-      this.signer = await this.provider.getSigner();
-      this.account = await this.signer.getAddress();
-      await this.renderSnapshot(this.currentVizChain);
-      return;
-    }
-    
-    const contractAddress = await getContractAddress();
-    if (contractAddress) {
-      try {
-        const stableProvider = await getMintProvider();
-        const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
-        const priceWei = await contract.mintPrice();
-        const mintPriceEth = ethers.formatEther(priceWei);
-        UI.generateNFTBtn.dataset.price = `${mintPriceEth}`;
-      } catch(e) {
-        console.warn("Could not fetch price on mint chain:", e);
-      }
-    }
-    
     showToast('📝 Requesting mint reservation...', 'info');
-    
     let requestData;
     try {
       const requestRes = await apiFetch('/api/request-mint', {
@@ -339,7 +241,6 @@ const App = Object.assign({}, AppState, {
     showToast('✅ Deposit confirmed!', 'success');
     
     showToast('📤 Uploading to Arweave...', 'info');
-    
     const nftFormData = new FormData();
     nftFormData.append('image', imageFile);
     nftFormData.append('video', videoFile);
@@ -349,10 +250,7 @@ const App = Object.assign({}, AppState, {
     
     let serverData;
     try {
-      const serverRes = await fetch('/api/prepare-nft', {
-        method: 'POST', headers: reqHeaders, body: nftFormData
-      });
-      
+      const serverRes = await fetch('/api/prepare-nft', { method: 'POST', headers: reqHeaders, body: nftFormData });
       if (!serverRes.ok) throw new Error('Arweave upload failed. Your deposit will be refunded automatically.');
       serverData = await serverRes.json();
       if (!serverData.success) throw new Error(serverData.error || 'Arweave processing failed');
@@ -365,7 +263,7 @@ const App = Object.assign({}, AppState, {
     }
     
     const mintResult = await this._finalizeMintAndSave(
-      serverData, imageBlob, videoBlob, imageHash, imageFileName, videoFileName,
+      serverData, mediaData.imageBlob, mediaData.videoBlob, imageHash, mediaData.imageFileName, mediaData.videoFileName,
       snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount,
       nativeTokenSymbol, tokenList, nftList, tx, txValue
     );
@@ -379,6 +277,95 @@ const App = Object.assign({}, AppState, {
     this.signer = await this.provider.getSigner();
     this.account = await this.signer.getAddress();
     await this.renderSnapshot(this.currentVizChain);
+  },
+
+  async _captureMediaAndSwitch(previousShowInfo) {
+    showToast('📸 Creating your NFT files...', 'info');
+    
+    let imageBlob;
+    try {
+      imageBlob = await new Promise((resolve, reject) => {
+        UI.canvas.toBlob((blob) => { if (blob) resolve(blob); else reject(new Error('Failed to create image')); }, 'image/png');
+      });
+    } catch (imageError) {
+      console.error('Image creation failed:', imageError);
+      showToast('❌ Failed to create image. Cannot mint NFT.', 'error');
+      showWarning('', false);
+      this.showInfo = previousShowInfo;
+      setButtonLoading(UI.generateNFTBtn, false);
+      return null;
+    }
+    
+    const imageFileName = `snapshot_${Date.now()}.png`;
+    const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
+    const imageHash = await calculateHashFromBlob(imageBlob);
+    
+    let videoBlob, videoFileName, videoFile, videoHash;
+    try {
+      const stream = UI.canvas.captureStream(30);
+      videoBlob = await new Promise((resolve, reject) => {
+        let mimeType = 'video/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
+        const recorder = new MediaRecorder(stream, { mimeType });
+        const chunks = [];
+        recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+        recorder.onerror = (event) => reject(event?.error || new Error('Recording failed'));
+        recorder.start(1000);
+        setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 15000);
+      });
+      const videoExt = videoBlob.type === 'video/mp4' ? 'mp4' : 'webm';
+      videoFileName = `video_${Date.now()}.${videoExt}`;
+      videoFile = new File([videoBlob], videoFileName, { type: videoBlob.type });
+      videoHash = await calculateHashFromBlob(videoBlob);
+      showToast('🎬 Video recorded!', 'success');
+    } catch (videoError) {
+      console.error('Video recording failed:', videoError);
+      showToast('❌ Failed to record video. Cannot mint NFT.', 'error');
+      showWarning('', false);
+      this.showInfo = previousShowInfo;
+      setButtonLoading(UI.generateNFTBtn, false);
+      return null;
+    }
+    
+    this.showInfo = previousShowInfo;
+    
+    showToast('🔄 Switching to Base...', 'info');
+    await switchToMintChain();
+    await new Promise(resolve => setTimeout(resolve, 400));
+    
+    this.provider = new ethers.BrowserProvider(window.ethereum);
+    this.signer = await this.provider.getSigner();
+    this.account = await this.signer.getAddress();
+    
+    const loginSuccess = await login(this.signer, this.account);
+    if (!loginSuccess) {
+      showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
+      showWarning('', false);
+      setButtonLoading(UI.generateNFTBtn, false);
+      await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      this.provider = new ethers.BrowserProvider(window.ethereum);
+      this.signer = await this.provider.getSigner();
+      this.account = await this.signer.getAddress();
+      await this.renderSnapshot(this.currentVizChain);
+      return null;
+    }
+    
+    const contractAddress = await getContractAddress();
+    if (contractAddress) {
+      try {
+        const stableProvider = await getMintProvider();
+        const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
+        const priceWei = await contract.mintPrice();
+        const mintPriceEth = ethers.formatEther(priceWei);
+        UI.generateNFTBtn.dataset.price = `${mintPriceEth}`;
+      } catch(e) {
+        console.warn("Could not fetch price on mint chain:", e);
+      }
+    }
+    
+    return { imageBlob, imageFile, imageFileName, imageHash, videoBlob, videoFile, videoFileName, videoHash };
   },
 
   async _finalizeMintAndSave(serverData, imageBlob, videoBlob, imageHash, imageFileName, videoFileName, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList, tx, txValue) {
@@ -441,12 +428,7 @@ const App = Object.assign({}, AppState, {
     try {
       const finalizeRes = await apiFetch('/api/finalize-mint', {
         method: 'POST',
-        body: JSON.stringify({
-          wallet: this.account,
-          metadataUri: metadataUri,
-          storageCostWei: storageCostWei,
-          contentHash: finalContentHash
-        })
+        body: JSON.stringify({ wallet: this.account, metadataUri, storageCostWei, contentHash: finalContentHash })
       });
       const finalizeData = await finalizeRes.json();
       if (!finalizeData.success) throw new Error(finalizeData.error || 'Finalize failed');
