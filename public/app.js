@@ -422,22 +422,8 @@ const App = Object.assign({}, AppState, {
       return null;
     }
     
-    const metadataUri = `${ARWEAVE_GATEWAY}${metaId}`;
-    showToast('🔒 Finalizing your NFT on blockchain...', 'info');
-    
-    try {
-      const finalizeRes = await apiFetch('/api/finalize-mint', {
-        method: 'POST',
-        body: JSON.stringify({ wallet: this.account, metadataUri, storageCostWei, contentHash: finalContentHash })
-      });
-      const finalizeData = await finalizeRes.json();
-      if (!finalizeData.success) throw new Error(finalizeData.error || 'Finalize failed');
-      showToast('✅ NFT finalized on blockchain!', 'success');
-    } catch (finalizeError) {
-      console.error('Finalize failed:', finalizeError);
-      showToast('❌ Finalize failed. Refund will be processed automatically.', 'error');
-    }
-    
+    // ✅ finalizeMint NOTIEK AUTOMĀTISKI caur prepare-nft, tāpēc šeit nav jāizsauc
+
     const metadataBlob = new Blob([localMetadataString], { type: 'application/json' });
     const metadataFileName = `metadata_${Date.now()}.json`;
     
