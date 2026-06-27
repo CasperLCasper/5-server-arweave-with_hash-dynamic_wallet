@@ -302,6 +302,23 @@ async function finalizeAndDownload(app, metaId, finalContentHash, storageCostWei
   showWarning('', false);
 }
 
+function handleMintingError(error) {
+  console.error(error);
+  let userMessage = 'Something went wrong. Please try again.';
+  
+  if (error.message?.includes('User denied') || error.code === 'ACTION_REJECTED') {
+    userMessage = '🛑 Transaction was cancelled in your wallet.';
+  } else if (error.message?.includes('insufficient funds')) {
+    userMessage = '💰 Insufficient funds. Please add ETH to your wallet and try again.';
+  } else if (error.message?.includes('deposit has been refunded') || error.message?.includes('refunded automatically')) {
+    userMessage = '📤 Upload failed. Your deposit will be refunded automatically.';
+  }
+  
+  showToast('❌ ' + userMessage, 'error');
+  showWarning('', false);
+  alert(userMessage);
+}
+
 async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList, previousShowInfo) {
   try {
     showToast('✍️ Sign to continue...', 'info');
@@ -373,20 +390,7 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
     await app.renderSnapshot(app.currentVizChain);
     
   } catch (error) {
-    console.error(error);
-    let userMessage = 'Something went wrong. Please try again.';
-    
-    if (error.message?.includes('User denied') || error.code === 'ACTION_REJECTED') {
-      userMessage = '🛑 Transaction was cancelled in your wallet.';
-    } else if (error.message?.includes('insufficient funds')) {
-      userMessage = '💰 Insufficient funds. Please add ETH to your wallet and try again.';
-    } else if (error.message?.includes('deposit has been refunded') || error.message?.includes('refunded automatically')) {
-      userMessage = '📤 Upload failed. Your deposit will be refunded automatically.';
-    }
-    
-    showToast('❌ ' + userMessage, 'error');
-    showWarning('', false);
-    alert(userMessage);
+    handleMintingError(error);
     
     try {
       await switchToVizChain(VIZ_CHAINS[app.currentVizChain].chainIdHex);
