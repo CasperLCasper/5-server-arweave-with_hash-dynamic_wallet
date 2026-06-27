@@ -259,6 +259,27 @@ export async function getTokens(account, chain) {
   }
 }
 
+// Palīgfunkcija NFT datu izgūšanai no atbildes
+function extractNFTsFromResponse(data) {
+  if (data?.result?.nfts) return { nfts: data.result.nfts, pageKey: data.result.pageKey };
+  if (data?.nfts) return { nfts: data.nfts, pageKey: data.pageKey };
+  if (Array.isArray(data)) return { nfts: data, pageKey: null };
+  return { nfts: [], pageKey: null };
+}
+
+// Palīgfunkcija NFT formatēšanai
+function formatNFT(nft) {
+  const symbol = nft.contract?.symbol || nft.symbol || nft.contract?.name || 'NFT';
+  
+  return {
+    address: nft.contract?.address || nft.contractAddress || nft.address || '',
+    symbol: symbol,
+    balance: 1,
+    isNFT: true,
+    tokenId: nft.id?.tokenId || nft.tokenId || nft.id || ''
+  };
+}
+
 export async function getAllNFTs(account, chain) {
   if (!account) return [];
   try {
@@ -278,16 +299,11 @@ export async function getAllNFTs(account, chain) {
       const res = await apiFetch(url);
       const data = await safeJson(res);
       
-      let nfts = [];
-      if (data?.result?.nfts) nfts = data.result.nfts;
-      else if (data?.nfts) nfts = data.nfts;
-      else if (Array.isArray(data)) nfts = data;
+      const { nfts, pageKey: newPageKey } = extractNFTsFromResponse(data);
       
       if (!nfts || nfts.length === 0) break;
       
       allNFTs.push(...nfts);
-      
-      const newPageKey = data?.result?.pageKey || data?.pageKey;
       
       if (!newPageKey) break;
       
@@ -302,18 +318,7 @@ export async function getAllNFTs(account, chain) {
     
     console.log(`✅ Loaded ${allNFTs.length} NFTs from ${chain}`);
     
-    return allNFTs.map(nft => {
-      // ✅ Izmanto pareizu simbolu NFT — ja nav, tad kolekcijas nosaukumu vai adresi
-      const symbol = nft.contract?.symbol || nft.symbol || nft.contract?.name || 'NFT';
-      
-      return {
-        address: nft.contract?.address || nft.contractAddress || nft.address || '',
-        symbol: symbol,
-        balance: 1,
-        isNFT: true,
-        tokenId: nft.id?.tokenId || nft.tokenId || nft.id || ''
-      };
-    });
+    return allNFTs.map(formatNFT);
   } catch(e) { 
     console.error("GetAllNFTs Error:", e); 
     return []; 
