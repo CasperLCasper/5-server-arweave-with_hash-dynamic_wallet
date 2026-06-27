@@ -22,394 +22,6 @@ import { ADDON_STYLES } from './themes.js';
 
 import { MAINTENANCE_CONFIG } from './maintenance.js';
 
-// ============================================
-// PALĪGFUNKCIJAS generateNFT kognitīvās sarežģītības samazināšanai
-// ============================================
-
-async function createImageBlob(canvas) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error('Failed to create image'));
-    }, 'image/png');
-  });
-}
-
-async function createVideoBlob(canvas) {
-  const stream = canvas.captureStream(30);
-  
-  return new Promise((resolve, reject) => {
-    let mimeType = 'video/webm';
-    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
-    const recorder = new MediaRecorder(stream, { mimeType });
-    const chunks = [];
-    
-    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-    recorder.onerror = (event) => reject(event?.error || new Error('Recording failed'));
-    
-    recorder.start(1000);
-    setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 15000);
-  });
-}
-
-async function handleAntiBotCheck(signer, account) {
-  const antiBotMessage = `Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${account}`;
-  try {
-    await signer.signMessage(antiBotMessage);
-    return { success: true };
-  } catch (signError) {
-    if (signError.message?.includes('User denied') || signError.code === 'ACTION_REJECTED') {
-      showToast('🛑 Cancelled by user', 'warning');
-    } else {
-      showToast('❌ Verification failed', 'error');
-    }
-    return { success: false, cancelled: true };
-  }
-}
-
-async function switchToBaseAndReauth(app) {
-  showToast('🔄 Switching to Base...', 'info');
-  await switchToMintChain();
-  await new Promise(resolve => setTimeout(resolve, 400));
-  
-  app.provider = new ethers.BrowserProvider(window.ethereum);
-  app.signer = await app.provider.getSigner();
-  app.account = await app.signer.getAddress();
-  
-  const loginSuccess = await login(app.signer, app.account);
-  if (!loginSuccess) {
-    showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
-    return false;
-  }
-  
-  const contractAddress = await getContractAddress();
-  if (contractAddress) {
-    try {
-      const stableProvider = await getMintProvider();
-      const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
-      const priceWei = await contract.mintPrice();
-      const mintPriceEth = ethers.formatEther(priceWei);
-      UI.generateNFTBtn.dataset.price = mintPriceEth;
-    } catch(e) {
-      console.warn("Could not fetch price on mint chain:", e);
-    }
-  }
-  
-  return true;
-}
-
-async function requestAndSendMintTx(app, imageHash, videoHash, tempContentHash) {
-  let requestData;
-  try {
-    const requestRes = await apiFetch('/api/request-mint', {
-      method: 'POST',
-      body: JSON.stringify({
-        wallet: app.account,
-        imageHash: imageHash,
-        videoHash: videoHash,
-        contentHash: tempContentHash
-      })
-    });
-    requestData = await requestRes.json();
-  } catch (apiError) {
-    console.error("Request mint API error:", apiError);
-    throw new Error(`Mint request failed: ${apiError.message}`);
-  }
-  
-  if (!requestData.success) throw new Error(requestData.error || 'Mint request failed');
-  
-  const txValue = BigInt(requestData.transaction.value);
-  const txGasLimit = BigInt(requestData.transaction.gasLimit);
-  
-  showToast('✍️ Please sign the transaction in your wallet...', 'info');
-  const tx = await app.signer.sendTransaction({
-    to: requestData.transaction.to,
-    data: requestData.transaction.data,
-    value: txValue,
-    gasLimit: txGasLimit
-  });
-  
-  showToast('⏳ Waiting for deposit confirmation...', 'info');
-  await tx.wait();
-  showToast('✅ Deposit confirmed!', 'success');
-  
-  return { tx, txValue, requestData };
-}
-
-async function uploadNFTFilesToArweave(imageFile, videoFile) {
-  const nftFormData = new FormData();
-  nftFormData.append('image', imageFile);
-  nftFormData.append('video', videoFile);
-  
-  const authToken = localStorage.getItem("auth_token");
-  const reqHeaders = authToken ? { "Authorization": `Bearer ${authToken}` } : {};
-  
-  const serverRes = await fetch('/api/prepare-nft', {
-    method: 'POST',
-    headers: reqHeaders,
-    body: nftFormData
-  });
-  
-  if (!serverRes.ok) {
-    throw new Error('Arweave upload failed. Your deposit will be refunded automatically.');
-  }
-  
-  const serverData = await serverRes.json();
-  if (!serverData.success) throw new Error(serverData.error || 'Arweave processing failed');
-  
-  return serverData;
-}
-
-function buildLocalMetadata(app, imageFileName, videoFileName, tokenList, nftList, snapshotData, nativeTokenSymbol) {
-  return {
-    name: "Wallet Visualization NFT",
-    description: `Generated from wallet ${app.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
-    image: imageFileName,
-    animation_url: videoFileName,
-    attributes: [
-      { trait_type: "Balance Amount", value: snapshotData.ethBalance },
-      { trait_type: "Native Token", value: nativeTokenSymbol },
-      { trait_type: "Token Count", value: snapshotData.tokenCount },
-      { trait_type: "NFT Count", value: snapshotData.nftCount },
-      { trait_type: "Transaction Count", value: snapshotData.txCount },
-      { trait_type: "Visual Style", value: ADDON_STYLES[app.currentAddonStyle]?.name || app.currentAddonStyle },
-      { trait_type: "Source Chain", value: app.currentVizChain },
-      { trait_type: "Storage", value: "Arweave (Permanent)" },
-      { trait_type: "Generated At", value: new Date().toISOString() }
-    ],
-    tokens: tokenList,
-    nfts: nftList
-  };
-}
-
-async function restoreVizChain(app) {
-  showToast('🔄 Refreshing view...', 'info');
-  await switchToVizChain(VIZ_CHAINS[app.currentVizChain].chainIdHex);
-  await new Promise(resolve => setTimeout(resolve, 500));
-  app.provider = new ethers.BrowserProvider(window.ethereum);
-  app.signer = await app.provider.getSigner();
-  app.account = await app.signer.getAddress();
-  await app.renderSnapshot(app.currentVizChain);
-}
-
-async function createMediaFiles(app) {
-  let imageBlob, videoBlob, imageHash, videoHash;
-  let imageFileName, videoFileName, imageFile, videoFile;
-  
-  try {
-    imageBlob = await createImageBlob(UI.canvas);
-    imageFileName = `snapshot_${Date.now()}.png`;
-    imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
-    imageHash = await calculateHashFromBlob(imageBlob);
-  } catch (imageError) {
-    console.error('Image creation failed:', imageError);
-    showToast('❌ Failed to create image. Cannot mint NFT.', 'error');
-    showWarning('', false);
-    setButtonLoading(UI.generateNFTBtn, false);
-    return null;
-  }
-  
-  try {
-    videoBlob = await createVideoBlob(UI.canvas);
-    const videoExt = videoBlob.type === 'video/mp4' ? 'mp4' : 'webm';
-    videoFileName = `video_${Date.now()}.${videoExt}`;
-    videoFile = new File([videoBlob], videoFileName, { type: videoBlob.type });
-    videoHash = await calculateHashFromBlob(videoBlob);
-    showToast('🎬 Video recorded!', 'success');
-  } catch (videoError) {
-    console.error('Video recording failed:', videoError);
-    showToast('❌ Failed to record video. Cannot mint NFT.', 'error');
-    showWarning('', false);
-    setButtonLoading(UI.generateNFTBtn, false);
-    return null;
-  }
-  
-  return { imageBlob, videoBlob, imageHash, videoHash, imageFileName, videoFileName, imageFile, videoFile };
-}
-
-async function handleArweaveUploadAndMetadata(app, imageFile, videoFile, imageHash, videoHash, videoBlob, imageFileName, videoFileName, tokenList, nftList, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol) {
-  showToast('📤 Uploading to Arweave...', 'info');
-  
-  let serverData;
-  try {
-    serverData = await uploadNFTFilesToArweave(imageFile, videoFile);
-  } catch (uploadError) {
-    console.error('Upload error:', uploadError);
-    showToast('❌ ' + uploadError.message, 'error');
-    showWarning('', false);
-    setButtonLoading(UI.generateNFTBtn, false);
-    return null;
-  }
-  
-  console.log('✅ Server processed:', serverData);
-  
-  const gw = ARWEAVE_GATEWAY;
-  const imageUrl = serverData.image.id ? `${gw}${serverData.image.id}` : `local://${imageHash}`;
-  const arweaveSuccess = serverData.arweave?.success || false;
-  const storageCostWei = serverData.storage?.costWei || "0";
-  const storageCostEth = serverData.storage?.costEth || "0";
-  
-  const localMetadata = buildLocalMetadata(
-    app, imageFileName, videoFileName, tokenList, nftList,
-    { ethBalance: snapshotEthBalance, txCount: snapshotTxCount, tokenCount: snapshotTokenCount, nftCount: snapshotNftCount },
-    nativeTokenSymbol
-  );
-
-  if (!videoBlob) delete localMetadata.animation_url;
-
-  const localMetadataString = JSON.stringify(localMetadata, null, 2);
-  const finalContentHash = await calculateHashFromBlob(new Blob([localMetadataString]));
-  
-  const arweaveMetadata = {
-    ...localMetadata,
-    image: imageUrl,
-    animation_url: serverData.video?.id ? `${gw}${serverData.video.id}` : undefined
-  };
-  if (!arweaveMetadata.animation_url) delete arweaveMetadata.animation_url;
-  
-  let metaId;
-  try {
-    const metaRes = await uploadMetadataToArweave(arweaveMetadata);
-    metaId = metaRes.id || metaRes.cid;
-    showToast('✅ Metadata uploaded to Arweave!', 'success');
-  } catch (metaError) {
-    console.error('Metadata upload failed:', metaError);
-    showToast('❌ Failed to upload metadata. Deposit will be refunded automatically.', 'error');
-    showWarning('', false);
-    setButtonLoading(UI.generateNFTBtn, false);
-    return null;
-  }
-  
-  return { serverData, localMetadataString, finalContentHash, metaId, arweaveSuccess, storageCostWei, storageCostEth };
-}
-
-async function finalizeAndSave(app, metaId, finalContentHash, storageCostWei, imageBlob, videoBlob, imageFileName, videoFileName, localMetadataString) {
-  const metadataUri = `${ARWEAVE_GATEWAY}${metaId}`;
-  showToast('🔒 Finalizing your NFT on blockchain...', 'info');
-  
-  try {
-    const finalizeRes = await apiFetch('/api/finalize-mint', {
-      method: 'POST',
-      body: JSON.stringify({
-        wallet: app.account,
-        metadataUri: metadataUri,
-        storageCostWei: storageCostWei,
-        contentHash: finalContentHash
-      })
-    });
-    const finalizeData = await finalizeRes.json();
-    if (!finalizeData.success) throw new Error(finalizeData.error || 'Finalize failed');
-    showToast('✅ NFT finalized on blockchain!', 'success');
-  } catch (finalizeError) {
-    console.error('Finalize failed:', finalizeError);
-    showToast('❌ Finalize failed. Refund will be processed automatically.', 'error');
-  }
-  
-  const metadataBlob = new Blob([localMetadataString], { type: 'application/json' });
-  const metadataFileName = `metadata_${Date.now()}.json`;
-  
-  showToast('💾 Saving all files as ZIP...', 'info');
-  
-  await downloadAllFiles([
-    { blob: imageBlob, filename: imageFileName },
-    { blob: metadataBlob, filename: metadataFileName },
-    { blob: videoBlob, filename: videoFileName }
-  ]);
-  showToast('✅ All files saved as ZIP!', 'success');
-  showWarning('', false);
-}
-
-async function executeNFTMinting(app) {
-  const snapshotEthBalance = app.ethBalance ? app.ethBalance.toString() : "0";
-  const snapshotTxCount = app.txCount ? app.txCount.toString() : "0";
-  const snapshotTokenCount = app.tokens ? app.tokens.filter(t => !t.isNFT).length.toString() : "0";
-  const snapshotNftCount = app.tokens ? app.tokens.filter(t => t.isNFT).length.toString() : "0";
-  
-  const currentChainConfig = VIZ_CHAINS[app.currentVizChain];
-  const isAmoy = app.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
-  const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
-  
-  const tokenList = app.tokens.filter(t => !t.isNFT).map(t => ({
-    symbol: t.symbol, address: t.address, balance: t.balance
-  }));
-  
-  const nftList = app.tokens.filter(t => t.isNFT).map(n => ({
-    symbol: n.symbol, address: n.address, tokenId: n.tokenId
-  }));
-
-  // 0. Anti-bot
-  showToast('✍️ Sign to continue...', 'info');
-  const { success: verified } = await handleAntiBotCheck(app.signer, app.account);
-  if (!verified) {
-    showWarning('', false);
-    setButtonLoading(UI.generateNFTBtn, false);
-    return;
-  }
-  
-  // 1. Uzņem attēlu un video
-  showToast('📸 Creating your NFT files...', 'info');
-  const media = await createMediaFiles(app);
-  if (!media) return;
-  
-  const { imageBlob, videoBlob, imageHash, videoHash, imageFileName, videoFileName, imageFile, videoFile } = media;
-  
-  // 2. Content hash
-  const tempContentHash = ethers.keccak256(
-    ethers.concat([
-      ethers.toUtf8Bytes('WalletVisualizer'),
-      imageHash, videoHash, ethers.toUtf8Bytes(app.account)
-    ])
-  );
-  
-  // 3. Pārslēdzas uz Base
-  const switched = await switchToBaseAndReauth(app);
-  if (!switched) {
-    showWarning('', false);
-    setButtonLoading(UI.generateNFTBtn, false);
-    await restoreVizChain(app);
-    return;
-  }
-  
-  // 4. requestMint
-  showToast('📝 Requesting mint reservation...', 'info');
-  const { tx, txValue } = await requestAndSendMintTx(app, imageHash, videoHash, tempContentHash);
-  
-  // 5-6. Arweave upload + metadata
-  const uploadResult = await handleArweaveUploadAndMetadata(
-    app, imageFile, videoFile, imageHash, videoHash, videoBlob,
-    imageFileName, videoFileName, tokenList, nftList,
-    snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol
-  );
-  if (!uploadResult) return;
-  
-  const { serverData, localMetadataString, finalContentHash, metaId, arweaveSuccess, storageCostWei, storageCostEth } = uploadResult;
-  
-  // 7. Finalize + save
-  await finalizeAndSave(app, metaId, finalContentHash, storageCostWei, imageBlob, videoBlob, imageFileName, videoFileName, localMetadataString);
-  
-  // 8. Rezultāts
-  const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
-  alert(`✅ NFT minted!\n\n` +
-    `Tx: ${tx.hash}\n` +
-    `Price: ${ethers.formatEther(txValue)} ETH\n` +
-    `(Storage: ${storageCostEth} ETH)\n\n` +
-    `🔐 Image Hash: ${imageHash}\n` +
-    `🔐 Video Hash: ${videoHash}\n` +
-    `🔐 Content Hash (Basescan & ZIP): ${finalContentHash}\n` +
-    `${metaId ? '📄 Arweave Metadata: ' + metaId + '\n' : ''}` +
-    `${serverData.image?.id ? '🖼️ Arweave Image: ' + serverData.image.id + '\n' : ''}` +
-    `${serverData.video?.id ? '🎬 Arweave Video: ' + serverData.video.id + '\n' : ''}` +
-    `\n${arweaveStatus} Arweave: ${arweaveSuccess ? 'OK' : 'Failed (files saved locally)'}` +
-    `\n\n💾 All files saved as nft_assets_*.zip`);
-  
-  await restoreVizChain(app);
-}
-
-// ============================================
-// GALVENĀ APLIKĀCIJA
-// ============================================
-
 const App = Object.assign({}, AppState, {
   setAddonStyle(styleName) {
     if (MAINTENANCE_CONFIG.isMaintenance) return;
@@ -457,7 +69,7 @@ const App = Object.assign({}, AppState, {
     if (UI.renderBtn) UI.renderBtn.disabled = true;
     if (UI.generateNFTBtn) {
       UI.generateNFTBtn.disabled = true;
-      UI.generateNFTBtn.dataset.price = '';
+      UI.generateNFTBtn.setAttribute('data-price', '');
     }
     
     updateChainStatus();
@@ -495,7 +107,7 @@ const App = Object.assign({}, AppState, {
     if (UI.renderBtn) UI.renderBtn.disabled = true;
     if (UI.generateNFTBtn) {
       UI.generateNFTBtn.disabled = true;
-      UI.generateNFTBtn.dataset.price = '';
+      UI.generateNFTBtn.setAttribute('data-price', '');
     }
     
     showToast('⏰ Session expired. Please click "Connect Wallet" to reconnect.', 'warning');
@@ -515,11 +127,362 @@ const App = Object.assign({}, AppState, {
     setButtonLoading(UI.generateNFTBtn, true);
     showWarning('⚠️ Do not close this tab until minting is complete and you have saved the ZIP file with your NFT files!', true);
 
+    const snapshotEthBalance = this.ethBalance ? this.ethBalance.toString() : "0";
+    const snapshotTxCount = this.txCount ? this.txCount.toString() : "0";
+    const snapshotTokenCount = this.tokens ? this.tokens.filter(t => !t.isNFT).length.toString() : "0";
+    const snapshotNftCount = this.tokens ? this.tokens.filter(t => t.isNFT).length.toString() : "0";
+    
     const previousShowInfo = this.showInfo;
     this.showInfo = false;
     
     try {
-      await executeNFTMinting(this);
+      // 0. ANTI-BOT
+      showToast('✍️ Sign to continue...', 'info');
+      
+      const antiBotMessage = `Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${this.account}`;
+      
+      try {
+        await this.signer.signMessage(antiBotMessage);
+      } catch (signError) {
+        if (signError.message?.includes('User denied') || signError.code === 'ACTION_REJECTED') {
+          showToast('🛑 Cancelled by user', 'warning');
+        } else {
+          showToast('❌ Verification failed', 'error');
+        }
+        showWarning('', false);
+        this.showInfo = previousShowInfo;
+        setButtonLoading(UI.generateNFTBtn, false);
+        return;
+      }
+      
+      // 1. UZŅEM ATTĒLU UN VIDEO (lokāli, neuploadē)
+      showToast('📸 Creating your NFT files...', 'info');
+      
+      let imageBlob;
+      try {
+        imageBlob = await new Promise((resolve, reject) => {
+          UI.canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error('Failed to create image'));
+          }, 'image/png');
+        });
+      } catch (imageError) {
+        console.error('Image creation failed:', imageError);
+        showToast('❌ Failed to create image. Cannot mint NFT.', 'error');
+        showWarning('', false);
+        this.showInfo = previousShowInfo;
+        setButtonLoading(UI.generateNFTBtn, false);
+        return;
+      }
+      
+      const imageFileName = `snapshot_${Date.now()}.png`;
+      const imageFile = new File([imageBlob], imageFileName, { type: 'image/png' });
+      const imageHash = await calculateHashFromBlob(imageBlob);
+      
+      let videoBlob;
+      let videoFileName;
+      let videoFile;
+      let videoHash;
+      
+      try {
+        const stream = UI.canvas.captureStream(30);
+        videoBlob = await new Promise((resolve, reject) => {
+          let mimeType = 'video/webm';
+          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
+          const recorder = new MediaRecorder(stream, { mimeType });
+          const chunks = [];
+          
+          recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+          recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+          recorder.onerror = (event) => reject(event?.error || new Error('Recording failed'));
+          
+          recorder.start(1000);
+          setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 15000);
+        });
+        
+        const videoExt = videoBlob.type === 'video/mp4' ? 'mp4' : 'webm';
+        videoFileName = `video_${Date.now()}.${videoExt}`;
+        videoFile = new File([videoBlob], videoFileName, { type: videoBlob.type });
+        videoHash = await calculateHashFromBlob(videoBlob);
+        showToast('🎬 Video recorded!', 'success');
+      } catch (videoError) {
+        console.error('Video recording failed:', videoError);
+        showToast('❌ Failed to record video. Cannot mint NFT.', 'error');
+        showWarning('', false);
+        this.showInfo = previousShowInfo;
+        setButtonLoading(UI.generateNFTBtn, false);
+        return;
+      }
+      
+      this.showInfo = previousShowInfo;
+      
+      // 2. APRĒĶINA PAGAIDU CONTENT HASH (priekš requestMint)
+      const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
+      const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
+      const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
+      
+      const tokenList = this.tokens.filter(t => !t.isNFT).map(t => ({
+        symbol: t.symbol,
+        address: t.address,
+        balance: t.balance
+      }));
+      
+      const nftList = this.tokens.filter(t => t.isNFT).map(n => ({
+        symbol: n.symbol,
+        address: n.address,
+        tokenId: n.tokenId
+      }));
+
+      const tempContentHash = ethers.keccak256(
+        ethers.concat([
+          ethers.toUtf8Bytes('WalletVisualizer'),
+          imageHash,
+          videoHash,
+          ethers.toUtf8Bytes(this.account)
+        ])
+      );
+      
+      // 3. PĀRSLĒDZAS UZ BASE SEPOLIA UN VEIC requestMint (LIETOTĀJS MAKSĀ)
+      showToast('🔄 Switching to Base...', 'info');
+      await switchToMintChain();
+      
+      await new Promise(resolve => setTimeout(resolve, 400));
+      
+      this.provider = new ethers.BrowserProvider(window.ethereum);
+      this.signer = await this.provider.getSigner();
+      this.account = await this.signer.getAddress();
+      
+      const loginSuccess = await login(this.signer, this.account);
+      if (!loginSuccess) {
+        showToast('🔐 Authentication failed. Please reconnect your wallet.', 'error');
+        showWarning('', false);
+        setButtonLoading(UI.generateNFTBtn, false);
+        await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        this.provider = new ethers.BrowserProvider(window.ethereum);
+        this.signer = await this.provider.getSigner();
+        this.account = await this.signer.getAddress();
+        await this.renderSnapshot(this.currentVizChain);
+        return;
+      }
+      
+      const contractAddress = await getContractAddress();
+      if (contractAddress) {
+        try {
+          const stableProvider = await getMintProvider();
+          const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, stableProvider);
+          const priceWei = await contract.mintPrice();
+          const mintPriceEth = ethers.formatEther(priceWei);
+          UI.generateNFTBtn.setAttribute('data-price', `${mintPriceEth}`);
+        } catch(e) {
+          console.warn("Could not fetch price on mint chain:", e);
+        }
+      }
+      
+      // ==========================================
+      // 4. requestMint — LIETOTĀJS MAKSĀ DEPOZĪTU
+      // ==========================================
+      showToast('📝 Requesting mint reservation...', 'info');
+      
+      let requestData;
+      try {
+        const requestRes = await apiFetch('/api/request-mint', {
+          method: 'POST',
+          body: JSON.stringify({
+            wallet: this.account,
+            imageHash: imageHash,
+            videoHash: videoHash,
+            contentHash: tempContentHash
+          })
+        });
+        requestData = await requestRes.json();
+      } catch (apiError) {
+        console.error("Request mint API error:", apiError);
+        throw new Error(`Mint request failed: ${apiError.message}`);
+      }
+      
+      if (!requestData.success) throw new Error(requestData.error || 'Mint request failed');
+      
+      const txValue = BigInt(requestData.transaction.value);
+      const txGasLimit = BigInt(requestData.transaction.gasLimit);
+      
+      console.log('📤 Sending requestMint transaction:', {
+        to: requestData.transaction.to,
+        valueWei: txValue.toString(),
+        valueEth: ethers.formatEther(txValue),
+        gasLimit: txGasLimit.toString()
+      });
+
+      showToast('✍️ Please sign the transaction in your wallet...', 'info');
+      const tx = await this.signer.sendTransaction({
+        to: requestData.transaction.to,
+        data: requestData.transaction.data,
+        value: txValue,
+        gasLimit: txGasLimit
+      });
+      
+      showToast('⏳ Waiting for deposit confirmation...', 'info');
+      await tx.wait();
+      showToast('✅ Deposit confirmed!', 'success');
+      
+      // ==========================================
+      // 5. TAGAD AUGŠUPIELĀDĒ ARWEAVE (pēc maksājuma)
+      // ==========================================
+      showToast('📤 Uploading to Arweave...', 'info');
+      
+      const nftFormData = new FormData();
+      nftFormData.append('image', imageFile);
+      nftFormData.append('video', videoFile);
+      
+      const authToken = localStorage.getItem("auth_token");
+      const reqHeaders = authToken ? { "Authorization": `Bearer ${authToken}` } : {};
+      
+      let serverData;
+      try {
+        const serverRes = await fetch('/api/prepare-nft', {
+          method: 'POST',
+          headers: reqHeaders,
+          body: nftFormData
+        });
+        
+        // 🆕 IZŅEMTS cancelMint izsaukums — cleanup robots apstrādās automātiski
+        if (!serverRes.ok) {
+          console.error('Upload failed — refund will be processed automatically');
+          throw new Error(`Arweave upload failed. Your deposit will be refunded automatically.`);
+        }
+        
+        serverData = await serverRes.json();
+        if (!serverData.success) throw new Error(serverData.error || 'Arweave processing failed');
+      } catch (uploadError) {
+        console.error('Upload error:', uploadError);
+        showToast('❌ ' + uploadError.message, 'error');
+        showWarning('', false);
+        setButtonLoading(UI.generateNFTBtn, false);
+        return;
+      }
+      
+      console.log('✅ Server processed:', serverData);
+      
+      const gw = ARWEAVE_GATEWAY;
+      const imageUrl = serverData.image.id ? `${gw}${serverData.image.id}` : `local://${imageHash}`;
+      const arweaveSuccess = serverData.arweave?.success || false;
+      const storageCostWei = serverData.storage?.costWei || "0";
+      const storageCostEth = serverData.storage?.costEth || "0";
+      
+      const localMetadata = {
+        name: "Wallet Visualization NFT",
+        description: `Generated from wallet ${this.account} on ${new Date().toISOString()}. Stored permanently on Arweave.`,
+        image: imageFileName,
+        animation_url: videoFileName,
+        attributes: [
+          { trait_type: "Balance Amount", value: snapshotEthBalance },
+          { trait_type: "Native Token", value: nativeTokenSymbol },
+          { trait_type: "Token Count", value: snapshotTokenCount },
+          { trait_type: "NFT Count", value: snapshotNftCount },
+          { trait_type: "Transaction Count", value: snapshotTxCount },
+          { trait_type: "Visual Style", value: ADDON_STYLES[this.currentAddonStyle]?.name || this.currentAddonStyle },
+          { trait_type: "Source Chain", value: this.currentVizChain },
+          { trait_type: "Storage", value: "Arweave (Permanent)" },
+          { trait_type: "Generated At", value: new Date().toISOString() }
+        ],
+        tokens: tokenList,
+        nfts: nftList
+      };
+
+      if (!videoBlob) delete localMetadata.animation_url;
+
+      const localMetadataString = JSON.stringify(localMetadata, null, 2);
+      const finalContentHash = await calculateHashFromBlob(new Blob([localMetadataString]));
+      
+      const arweaveMetadata = {
+        ...localMetadata,
+        image: imageUrl,
+        animation_url: serverData.video?.id ? `${gw}${serverData.video.id}` : undefined
+      };
+      if (!arweaveMetadata.animation_url) delete arweaveMetadata.animation_url;
+      
+      let metaId;
+      try {
+        const metaRes = await uploadMetadataToArweave(arweaveMetadata);
+        metaId = metaRes.id || metaRes.cid;
+        showToast('✅ Metadata uploaded to Arweave!', 'success');
+      } catch (metaError) {
+        console.error('Metadata upload failed:', metaError);
+        // 🆕 IZŅEMTS cancelMint izsaukums — cleanup robots apstrādās automātiski
+        showToast('❌ Failed to upload metadata. Deposit will be refunded automatically.', 'error');
+        showWarning('', false);
+        setButtonLoading(UI.generateNFTBtn, false);
+        return;
+      }
+      
+      // ==========================================
+      // 6. finalizeMint — SERVERIS PABEIDZ
+      // ==========================================
+      const metadataUri = `${ARWEAVE_GATEWAY}${metaId}`;
+      
+      showToast('🔒 Finalizing your NFT on blockchain...', 'info');
+      
+      try {
+        const finalizeRes = await apiFetch('/api/finalize-mint', {
+          method: 'POST',
+          body: JSON.stringify({
+            wallet: this.account,
+            metadataUri: metadataUri,
+            storageCostWei: storageCostWei,
+            contentHash: finalContentHash
+          })
+        });
+        const finalizeData = await finalizeRes.json();
+        if (!finalizeData.success) throw new Error(finalizeData.error || 'Finalize failed');
+        showToast('✅ NFT finalized on blockchain!', 'success');
+      } catch (finalizeError) {
+        console.error('Finalize failed:', finalizeError);
+        // 🆕 IZŅEMTS cancelMint izsaukums — cleanup robots apstrādās automātiski
+        showToast('❌ Finalize failed. Refund will be processed automatically.', 'error');
+      }
+      
+      // ==========================================
+      // 7. ZIP — SAGLABĀJAM
+      // ==========================================
+      const metadataBlob = new Blob([localMetadataString], { type: 'application/json' });
+      const metadataFileName = `metadata_${Date.now()}.json`;
+      
+      showToast('💾 Saving all files as ZIP...', 'info');
+      
+      const completeFiles = [
+        { blob: imageBlob, filename: imageFileName },
+        { blob: metadataBlob, filename: metadataFileName },
+        { blob: videoBlob, filename: videoFileName }
+      ];
+      await downloadAllFiles(completeFiles);
+      showToast('✅ All files saved as ZIP!', 'success');
+      
+      showWarning('', false);
+      
+      // 8. REZULTĀTS
+      const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
+      alert(`✅ NFT minted!\n\n` +
+        `Tx: ${tx.hash}\n` +
+        `Price: ${ethers.formatEther(txValue)} ETH\n` +
+        `(Storage: ${storageCostEth} ETH)\n\n` +
+        `🔐 Image Hash: ${imageHash}\n` +
+        `🔐 Video Hash: ${videoHash}\n` +
+        `🔐 Content Hash (Basescan & ZIP): ${finalContentHash}\n` +
+        `${metaId ? '📄 Arweave Metadata: ' + metaId + '\n' : ''}` +
+        `${serverData.image?.id ? '🖼️ Arweave Image: ' + serverData.image.id + '\n' : ''}` +
+        `${serverData.video?.id ? '🎬 Arweave Video: ' + serverData.video.id + '\n' : ''}` +
+        `\n${arweaveStatus} Arweave: ${arweaveSuccess ? 'OK' : 'Failed (files saved locally)'}` +
+        `\n\n💾 All files saved as nft_assets_*.zip`);
+      
+      // 9. ATJAUNO VIZUALIZĀCIJU
+      showToast('🔄 Refreshing view...', 'info');
+      await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      this.provider = new ethers.BrowserProvider(window.ethereum);
+      this.signer = await this.provider.getSigner();
+      this.account = await this.signer.getAddress();
+      await this.renderSnapshot(this.currentVizChain);
+      
     } catch (error) {
       console.error(error);
       let userMessage = 'Something went wrong. Please try again.';
@@ -537,7 +500,12 @@ const App = Object.assign({}, AppState, {
       alert(userMessage);
       
       try {
-        await restoreVizChain(this);
+        await switchToVizChain(VIZ_CHAINS[this.currentVizChain].chainIdHex);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        this.provider = new ethers.BrowserProvider(window.ethereum);
+        this.signer = await this.provider.getSigner();
+        this.account = await this.signer.getAddress();
+        await this.renderSnapshot(this.currentVizChain);
       } catch (restoreErr) {
         console.warn('Could not restore visualization:', restoreErr);
       }
@@ -555,7 +523,7 @@ const App = Object.assign({}, AppState, {
     if (UI.renderBtn) UI.renderBtn.disabled = false;
     if (UI.generateNFTBtn) {
       const price = await getNFTPrice();
-      UI.generateNFTBtn.dataset.price = price;
+      UI.generateNFTBtn.setAttribute('data-price', price);
     }
   },
 
@@ -581,7 +549,7 @@ const App = Object.assign({}, AppState, {
     if (UI.renderBtn) UI.renderBtn.disabled = true;
     if (UI.generateNFTBtn) {
       UI.generateNFTBtn.disabled = true;
-      UI.generateNFTBtn.dataset.price = '';
+      UI.generateNFTBtn.setAttribute('data-price', '');
     }
   },
 
@@ -660,7 +628,7 @@ const App = Object.assign({}, AppState, {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        this.setAddonStyle(btn.dataset.theme);
+        this.setAddonStyle(btn.getAttribute('data-theme'));
       });
     });
     
