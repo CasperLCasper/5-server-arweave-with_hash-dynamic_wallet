@@ -52,6 +52,41 @@ export async function switchToMintChain() {
   }
 }
 
+function isNetworkMissingError(error) {
+  return error.code === 4902 || 
+    (error.message && error.message.includes('not supported')) ||
+    (error.message && error.message.includes('wallet_switchEthereumChain'));
+}
+
+function findChainConfig(chainIdHex) {
+  return Object.values(VIZ_CHAINS).find(
+    c => c.chainIdHex && chainIdHex && c.chainIdHex.toLowerCase() === chainIdHex.toLowerCase()
+  );
+}
+
+async function addChainToWallet(chainConfig) {
+  const isAmoy = chainConfig.chainIdHex.toLowerCase() === '0x13882';
+  
+  const currencySymbol = isAmoy ? 'POL' : (chainConfig.nativeCurrency || 'ETH');
+  const explorerUrl = isAmoy ? 'https://amoy.polygonscan.com/' : chainConfig.blockExplorer;
+  const rpcUrlsArray = isAmoy ? ['https://rpc-amoy.polygon.technology'] : (Array.isArray(chainConfig.rpc) ? chainConfig.rpc : [chainConfig.rpc]);
+
+  await window.ethereum.request({
+    method: 'wallet_addEthereumChain',
+    params: [{
+      chainId: chainConfig.chainIdHex,
+      chainName: isAmoy ? 'Polygon Amoy Testnet' : chainConfig.name,
+      nativeCurrency: { 
+        name: currencySymbol, 
+        symbol: currencySymbol, 
+        decimals: 18 
+      },
+      rpcUrls: rpcUrlsArray,
+      blockExplorerUrls: explorerUrl ? [explorerUrl] : []
+    }]
+  });
+}
+
 export async function switchToVizChain(chainIdHex) {
   try {
     await window.ethereum.request({
@@ -60,37 +95,11 @@ export async function switchToVizChain(chainIdHex) {
     });
     await updateChainStatus();
   } catch (error) {
-    const isNetworkMissing = 
-      error.code === 4902 || 
-      (error.message && error.message.includes('not supported')) ||
-      (error.message && error.message.includes('wallet_switchEthereumChain'));
-
-    if (isNetworkMissing) {
-      const chainConfig = Object.values(VIZ_CHAINS).find(
-        c => c.chainIdHex && chainIdHex && c.chainIdHex.toLowerCase() === chainIdHex.toLowerCase()
-      );
+    if (isNetworkMissingError(error)) {
+      const chainConfig = findChainConfig(chainIdHex);
       
       if (chainConfig) {
-        const isAmoy = chainConfig.chainIdHex.toLowerCase() === '0x13882';
-        
-        const currencySymbol = isAmoy ? 'POL' : (chainConfig.nativeCurrency || 'ETH');
-        const explorerUrl = isAmoy ? 'https://amoy.polygonscan.com/' : chainConfig.blockExplorer;
-        const rpcUrlsArray = isAmoy ? ['https://rpc-amoy.polygon.technology'] : (Array.isArray(chainConfig.rpc) ? chainConfig.rpc : [chainConfig.rpc]);
-
-        await window.ethereum.request({
-          method: 'wallet_addEthereumChain',
-          params: [{
-            chainId: chainConfig.chainIdHex,
-            chainName: isAmoy ? 'Polygon Amoy Testnet' : chainConfig.name,
-            nativeCurrency: { 
-              name: currencySymbol, 
-              symbol: currencySymbol, 
-              decimals: 18 
-            },
-            rpcUrls: rpcUrlsArray,
-            blockExplorerUrls: explorerUrl ? [explorerUrl] : []
-          }]
-        });
+        await addChainToWallet(chainConfig);
         await updateChainStatus();
       }
     } else {
@@ -106,12 +115,6 @@ async function updateBalanceDisplay(account) {
   try {
     balanceDisplay.textContent = '💰 Checking balance...';
     balanceDisplay.className = 'balance-display checking';
-    
-    const selectedChainKey = UI.chainSelect ? UI.chainSelect.value : null;
-    const selectedChain = VIZ_CHAINS[selectedChainKey];
-    
-    const isAmoy = selectedChain?.chainIdHex?.toLowerCase() === '0x13882';
-    const vizTokenSymbol = isAmoy ? 'POL' : (selectedChain?.nativeCurrency || 'ETH');
     
     const baseMintRpc = getRpcUrl('baseSepolia') || 'https://sepolia.base.org';
     const baseProvider = new ethers.JsonRpcProvider(baseMintRpc);
@@ -136,7 +139,6 @@ async function updateBalanceDisplay(account) {
       balanceDisplay.className = 'balance-display insufficient';
     }
     
-    // ✅ KONTROLĒ GENERATE NFT POGU
     if (UI.generateNFTBtn) {
       if (balanceWei >= mintPriceWei) {
         UI.generateNFTBtn.disabled = false;
@@ -151,12 +153,23 @@ async function updateBalanceDisplay(account) {
     balanceDisplay.textContent = `❌ Unable to check balance. Please refresh.`;
     balanceDisplay.className = 'balance-display insufficient';
     
-    // Kļūdas gadījumā deaktivizē pogu
     if (UI.generateNFTBtn) {
       UI.generateNFTBtn.disabled = true;
       UI.generateNFTBtn.title = 'Unable to check balance';
     }
   }
+}
+
+function handleConnectError(err) {
+  let userMessage = 'Unable to connect wallet. Please try again.';
+  if (err.message && err.message.includes('User rejected')) {
+    userMessage = 'You cancelled the connection. Please approve to continue.';
+  } else if (err.message && err.message.includes('Login rejected')) {
+    userMessage = 'You need to sign the message to access your wallet data.';
+  } else if (err.message && err.message.includes('Already processing')) {
+    userMessage = 'Please wait, wallet is busy. Try again in a moment.';
+  }
+  return userMessage;
 }
 
 export async function connectWallet(app) {
@@ -203,7 +216,7 @@ export async function connectWallet(app) {
     UI.recordBtn.disabled = false;
     
     const price = await getNFTPrice();
-    UI.generateNFTBtn.setAttribute('data-price', price);
+    UI.generateNFTBtn.dataset.price = price;
     
     await updateChainStatus();
     await updateBalanceDisplay(account);
@@ -213,17 +226,7 @@ export async function connectWallet(app) {
     
   } catch (err) { 
     console.error(err);
-    
-    let userMessage = 'Unable to connect wallet. Please try again.';
-    if (err.message && err.message.includes('User rejected')) {
-      userMessage = 'You cancelled the connection. Please approve to continue.';
-    } else if (err.message && err.message.includes('Login rejected')) {
-      userMessage = 'You need to sign the message to access your wallet data.';
-    } else if (err.message && err.message.includes('Already processing')) {
-      userMessage = 'Please wait, wallet is busy. Try again in a moment.';
-    }
-    
-    showToast(userMessage, 'error');
+    showToast(handleConnectError(err), 'error');
     
     if (err.message && (err.message.includes('User rejected') || err.message.includes('Login rejected'))) {
       app.provider = null;
