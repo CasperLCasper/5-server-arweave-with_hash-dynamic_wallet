@@ -49,6 +49,83 @@ app.use((req, res, next) => {
     next();
 });
 
+// ============================================
+// MULTIPART FORM DATA PARSĒŠANA
+// ============================================
+
+function getBoundary(contentType) {
+    const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+    if (!boundaryMatch) return null;
+    return '--' + (boundaryMatch[1] || boundaryMatch[2]);
+}
+
+function parseMultipartField(headerStr, body, storage) {
+    const nameMatch = headerStr.match(/name="([^"]+)"/);
+    const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+    const typeMatch = headerStr.match(/Content-Type:\s*([^\s\r\n]+)/);
+    
+    if (!nameMatch) return;
+    
+    const key = nameMatch[1];
+    if (filenameMatch) {
+        const filename = filenameMatch[1];
+        const mimeType = typeMatch ? typeMatch[1] : 'image/png';
+        storage[key] = new File([body], filename, { type: mimeType });
+    } else {
+        storage[key] = body.toString('utf-8');
+    }
+}
+
+function parseMultipartData(buffer, boundary) {
+    const storage = {};
+    let offset = 0;
+    
+    while ((offset = buffer.indexOf(boundary, offset)) !== -1) {
+        offset += boundary.length;
+        if (buffer[offset] === 0x2d && buffer[offset + 1] === 0x2d) break;
+        offset += 2;
+        const nextBoundary = buffer.indexOf(boundary, offset);
+        if (nextBoundary === -1) break;
+        const part = buffer.subarray(offset, nextBoundary);
+        const headerEnd = part.indexOf('\r\n\r\n');
+        if (headerEnd !== -1) {
+            const headerStr = part.subarray(0, headerEnd).toString('utf-8');
+            const body = part.subarray(headerEnd + 4, part.length - 2);
+            parseMultipartField(headerStr, body, storage);
+        }
+        offset = nextBoundary;
+    }
+    
+    return storage;
+}
+
+function addBodyFieldsToStorage(req, storage) {
+    if (req.body) {
+        Object.keys(req.body).forEach(key => { storage[key] = req.body[key]; });
+    }
+}
+
+function createFormDataHandler(req) {
+    const storage = {};
+    
+    if (req.rawBody) {
+        const contentType = req.headers['content-type'];
+        const boundary = getBoundary(contentType);
+        if (boundary) {
+            const parsedStorage = parseMultipartData(req.rawBody, boundary);
+            Object.assign(storage, parsedStorage);
+        }
+    }
+    
+    addBodyFieldsToStorage(req, storage);
+    
+    return { get: (key) => storage[key] || null, has: (key) => key in storage };
+}
+
+// ============================================
+// CLOUDFLARE ADAPTERIS
+// ============================================
+
 function createCloudflareAdapter(handler) {
     return async (req, res) => {
         try {
@@ -64,49 +141,7 @@ function createCloudflareAdapter(handler) {
                 env: process.env, 
                 request: {
                     json: async () => req.body,
-                    formData: async () => {
-                        const storage = {};
-                        if (req.rawBody) {
-                            const contentType = req.headers['content-type'];
-                            const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
-                            if (boundaryMatch) {
-                                const boundary = '--' + (boundaryMatch[1] || boundaryMatch[2]);
-                                const buffer = req.rawBody;
-                                let offset = 0;
-                                while ((offset = buffer.indexOf(boundary, offset)) !== -1) {
-                                    offset += boundary.length;
-                                    if (buffer[offset] === 0x2d && buffer[offset + 1] === 0x2d) break;
-                                    offset += 2;
-                                    const nextBoundary = buffer.indexOf(boundary, offset);
-                                    if (nextBoundary === -1) break;
-                                    const part = buffer.subarray(offset, nextBoundary);
-                                    const headerEnd = part.indexOf('\r\n\r\n');
-                                    if (headerEnd !== -1) {
-                                        const headerStr = part.subarray(0, headerEnd).toString('utf-8');
-                                        const body = part.subarray(headerEnd + 4, part.length - 2);
-                                        const nameMatch = headerStr.match(/name="([^"]+)"/);
-                                        const filenameMatch = headerStr.match(/filename="([^"]+)"/);
-                                        const typeMatch = headerStr.match(/Content-Type:\s*([^\s\r\n]+)/);
-                                        if (nameMatch) {
-                                            const key = nameMatch[1];
-                                            if (filenameMatch) {
-                                                const filename = filenameMatch[1];
-                                                const mimeType = typeMatch ? typeMatch[1] : 'image/png';
-                                                storage[key] = new File([body], filename, { type: mimeType });
-                                            } else {
-                                                storage[key] = body.toString('utf-8');
-                                            }
-                                        }
-                                    }
-                                    offset = nextBoundary;
-                                }
-                            }
-                        }
-                        if (req.body) {
-                            Object.keys(req.body).forEach(key => { storage[key] = req.body[key]; });
-                        }
-                        return { get: (key) => storage[key] || null, has: (key) => key in storage };
-                    },
+                    formData: async () => createFormDataHandler(req),
                     url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
                     headers: headersEmulator
                 },
@@ -141,7 +176,47 @@ function createCloudflareAdapter(handler) {
     };
 }
 
+// ============================================
+// MARŠRUTU REĢISTRĀCIJA
+// ============================================
+
 const apiDir = path.join(__dirname, 'functions', 'api');
+
+function getHandlerFromModule(module) {
+    return {
+        getHandler: module.onRequestGet || module.onRequestGET || module.onrequestget,
+        postHandler: module.onRequestPost || module.onRequestPOST || module.onrequestpost,
+        genericHandler: module.onRequest || module.onRequestGeneric,
+        defaultHandler: module.default
+    };
+}
+
+function registerRoute(app, fullRoute, module) {
+    const { getHandler, postHandler, genericHandler, defaultHandler } = getHandlerFromModule(module);
+    
+    if (getHandler) app.get(fullRoute, createCloudflareAdapter(getHandler));
+    if (postHandler) app.post(fullRoute, createCloudflareAdapter(postHandler));
+    if (genericHandler) app.all(fullRoute, createCloudflareAdapter(genericHandler));
+    if (defaultHandler && !getHandler && !postHandler && !genericHandler) {
+        app.all(fullRoute, defaultHandler);
+    }
+    console.log(`Reģistrēts maršruts: ${fullRoute}`);
+}
+
+async function loadAndRegisterRoute(app, fullPath, fullRoute) {
+    try {
+        const fileUrl = new URL(`file://${fullPath}`).href;
+        const module = await import(fileUrl);
+        registerRoute(app, fullRoute, module);
+    } catch (e) {
+        console.error(`Kļūda ielādējot maršrutu ${fullRoute}:`, e);
+    }
+}
+
+function getRouteName(file, routePrefix) {
+    const routeName = file === 'index.js' ? '' : `/${file.slice(0, -3)}`;
+    return `${routePrefix}${routeName}`.toLowerCase();
+}
 
 async function walkRoutes(dir, routePrefix = '/api') {
     if (!fs.existsSync(dir)) return;
@@ -152,25 +227,8 @@ async function walkRoutes(dir, routePrefix = '/api') {
         if (stat.isDirectory()) {
             await walkRoutes(fullPath, `${routePrefix}/${file}`);
         } else if (file.endsWith('.js')) {
-            const routeName = file === 'index.js' ? '' : `/${file.slice(0, -3)}`;
-            const fullRoute = `${routePrefix}${routeName}`.toLowerCase();
-            try {
-                const fileUrl = new URL(`file://${fullPath}`).href;
-                const module = await import(fileUrl);
-                const getHandler = module.onRequestGet || module.onRequestGET || module.onrequestget;
-                const postHandler = module.onRequestPost || module.onRequestPOST || module.onrequestpost;
-                const genericHandler = module.onRequest || module.onRequestGeneric;
-                const defaultHandler = module.default;
-                if (getHandler) app.get(fullRoute, createCloudflareAdapter(getHandler));
-                if (postHandler) app.post(fullRoute, createCloudflareAdapter(postHandler));
-                if (genericHandler) app.all(fullRoute, createCloudflareAdapter(genericHandler));
-                if (defaultHandler && !getHandler && !postHandler && !genericHandler) {
-                    app.all(fullRoute, defaultHandler);
-                }
-                console.log(`Reģistrēts maršruts: ${fullRoute}`);
-            } catch (e) {
-                console.error(`Kļūda ielādējot maršrutu ${fullRoute}:`, e);
-            }
+            const fullRoute = getRouteName(file, routePrefix);
+            await loadAndRegisterRoute(app, fullPath, fullRoute);
         }
     }
 }
