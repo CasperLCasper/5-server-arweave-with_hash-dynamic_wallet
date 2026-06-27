@@ -22,10 +22,8 @@ import { ADDON_STYLES } from './themes.js';
 
 import { MAINTENANCE_CONFIG } from './maintenance.js';
 
-// Palīgfunkcija - izvilkta no generateNFT, lai samazinātu kognitīvo sarežģītību
 async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList, previousShowInfo) {
   try {
-    // 0. ANTI-BOT
     showToast('✍️ Sign to continue...', 'info');
     
     const antiBotMessage = `Wallet Visualizer NFT Generation\nTimestamp: ${Date.now()}\nWallet: ${app.account}`;
@@ -44,7 +42,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
       return;
     }
     
-    // 1. UZŅEM ATTĒLU UN VIDEO (lokāli, neuploadē)
     showToast('📸 Creating your NFT files...', 'info');
     
     let imageBlob;
@@ -105,7 +102,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
     
     app.showInfo = previousShowInfo;
     
-    // 2. APRĒĶINA PAGAIDU CONTENT HASH
     const tempContentHash = ethers.keccak256(
       ethers.concat([
         ethers.toUtf8Bytes('WalletVisualizer'),
@@ -115,7 +111,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
       ])
     );
     
-    // 3. PĀRSLĒDZAS UZ BASE SEPOLIA UN VEIC requestMint
     showToast('🔄 Switching to Base...', 'info');
     await switchToMintChain();
     
@@ -152,7 +147,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
       }
     }
     
-    // 4. requestMint
     showToast('📝 Requesting mint reservation...', 'info');
     
     let requestData;
@@ -189,7 +183,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
     await tx.wait();
     showToast('✅ Deposit confirmed!', 'success');
     
-    // 5. TAGAD AUGŠUPIELĀDĒ ARWEAVE
     showToast('📤 Uploading to Arweave...', 'info');
     
     const nftFormData = new FormData();
@@ -275,7 +268,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
       return;
     }
     
-    // 6. finalizeMint
     const metadataUri = `${ARWEAVE_GATEWAY}${metaId}`;
     
     showToast('🔒 Finalizing your NFT on blockchain...', 'info');
@@ -298,7 +290,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
       showToast('❌ Finalize failed. Refund will be processed automatically.', 'error');
     }
     
-    // 7. ZIP
     const metadataBlob = new Blob([localMetadataString], { type: 'application/json' });
     const metadataFileName = `metadata_${Date.now()}.json`;
     
@@ -314,7 +305,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
     
     showWarning('', false);
     
-    // 8. REZULTĀTS
     const arweaveStatus = arweaveSuccess ? '✅' : '⚠️';
     alert(`✅ NFT minted!\n\n` +
       `Tx: ${tx.hash}\n` +
@@ -329,7 +319,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
       `\n${arweaveStatus} Arweave: ${arweaveSuccess ? 'OK' : 'Failed (files saved locally)'}` +
       `\n\n💾 All files saved as nft_assets_*.zip`);
     
-    // 9. ATJAUNO VIZUALIZĀCIJU
     showToast('🔄 Refreshing view...', 'info');
     await switchToVizChain(VIZ_CHAINS[app.currentVizChain].chainIdHex);
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -364,9 +353,6 @@ async function executeNFTMinting(app, snapshotEthBalance, snapshotTxCount, snaps
     } catch (restoreErr) {
       console.warn('Could not restore visualization:', restoreErr);
     }
-  } finally { 
-    app.showInfo = previousShowInfo;
-    setButtonLoading(UI.generateNFTBtn, false);
   }
 }
 
