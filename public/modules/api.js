@@ -230,6 +230,8 @@ export async function getTokens(account, chain) {
     if (!data?.tokens) return [];
     
     return data.tokens.map(t => {
+      // 🔥 LABOTS: Serveris atgriež "contract", "balance", "decimalBalance"
+      const tokenAddress = t.contract || t.contractAddress || "";
       const decimals = t.decimals || 18;
       const rawBalance = t.balance || "0";
       
@@ -243,11 +245,10 @@ export async function getTokens(account, chain) {
         formattedBalance = 0;
       }
       
-      // ✅ Izmanto pareizu simbolu — ja nav, tad saīsinātu adresi
-      const symbol = t.symbol || t.name || (t.contract || t.contractAddress || '').substring(0, 8) + '...';
+      const symbol = t.symbol || t.name || tokenAddress.substring(0, 8) + '...';
       
       return {
-        address: t.contract || t.contractAddress || "",
+        address: tokenAddress,
         balance: formattedBalance,
         symbol: symbol,
         isNFT: false
