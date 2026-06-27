@@ -238,6 +238,7 @@ function drawInfoText(ctx, app, addon) {
   const currentChainConfig = VIZ_CHAINS[app.currentVizChain];
   const isAmoy = app.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
   const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
+
   const isLoadingData = UI.renderBtn && UI.renderBtn.disabled;
 
   ctx.fillStyle = '#0ff';
@@ -256,7 +257,7 @@ function drawInfoText(ctx, app, addon) {
   ctx.fillStyle = '#888';
   
   if (isLoadingData) {
-    ctx.fillText('Updating blockchain state, please wait...', 15, 125);
+    ctx.fillText(`Updating blockchain state, please wait...`, 15, 125);
   } else {
     const tokenCount = app.tokens.filter(t => !t.isNFT).length;
     ctx.fillText(`TX: ${app.txCount} | Assets: ${app.tokens.length} (${tokenCount} tokens, ${app.nftCenters.length} NFTs)`, 15, 125);
@@ -272,31 +273,23 @@ export function drawFrame(app, frame, showTokensFrame) {
   const W = app.canvasWidth || UI.canvas.width;
   const H = app.canvasHeight || UI.canvas.height;
   const ctx = app.ctx || UI.canvas.getContext('2d');
-  const cx0 = W / 2, cy0 = H / 2;
+  const cx0 = W / 2;
+  const cy0 = H / 2;
   const txSpeedFactor = Math.min(1 + Math.log(app.txCount + 1) / 15, 2.0);
   
-  // 1. Clear canvas
   clearCanvas(ctx, W, H);
-  
-  // 2. Update particle positions
   updateParticlePositions(app, cx0, cy0, txSpeedFactor);
   
-  // 3. Build and draw connection lines
   const lineGroups = buildLineGroups(app, frame, addon);
   drawLineGroups(ctx, lineGroups);
   
-  // 4. Draw particles
   drawParticles(ctx, app, addon);
-  
-  // 5. Draw NFT centers
   drawNFTCenters(ctx, app);
   
-  // 6. Extra effects (low power mode check)
   if (!VIZ_LOW_POWER_MODE || frame % 2 === 0) {
     addon.drawExtraEffects(ctx, W, H, frame, app.particles, cx0, cy0);
   }
   
-  // 7. Info text
   if (showTokensFrame && app.showInfo) {
     drawInfoText(ctx, app, addon);
   }
@@ -376,8 +369,10 @@ export async function renderSnapshot(app, chain) {
     { name: 'Creating visualization...', func: async () => { await initParticlesOnce(app); app.particles = cloneParticles(app); }}
   ];
 
-  let currentStep = 0, totalSteps = steps.length;
-  let visualProgress = 0, running = true;
+  let currentStep = 0;
+  let totalSteps = steps.length;
+  let visualProgress = 0;
+  let running = true;
 
   const animateProgress = () => {
     if (!running) return;
@@ -410,5 +405,7 @@ export async function renderSnapshot(app, chain) {
     hideProgress();
     console.error(e);
     showToast('Render failed: ' + e.message, 'error');
-  } finally { setButtonLoading(UI.renderBtn, false); }
+  } finally { 
+    setButtonLoading(UI.renderBtn, false); 
+  }
 }
