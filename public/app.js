@@ -320,23 +320,8 @@ async function finalizeAndSave(app, metaId, finalContentHash, storageCostWei, im
   showWarning('', false);
 }
 
-async function executeNFTMinting(app) {
-  const snapshotEthBalance = app.ethBalance ? app.ethBalance.toString() : "0";
-  const snapshotTxCount = app.txCount ? app.txCount.toString() : "0";
-  const snapshotTokenCount = app.tokens ? app.tokens.filter(t => !t.isNFT).length.toString() : "0";
-  const snapshotNftCount = app.tokens ? app.tokens.filter(t => t.isNFT).length.toString() : "0";
-  
-  const currentChainConfig = VIZ_CHAINS[app.currentVizChain];
-  const isAmoy = app.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
-  const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
-  
-  const tokenList = app.tokens.filter(t => !t.isNFT).map(t => ({
-    symbol: t.symbol, address: t.address, balance: t.balance
-  }));
-  
-  const nftList = app.tokens.filter(t => t.isNFT).map(n => ({
-    symbol: n.symbol, address: n.address, tokenId: n.tokenId
-  }));
+async function executeNFTMinting(app, savedData) {
+  const { snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList } = savedData;
 
   // 0. Anti-bot
   showToast('✍️ Sign to continue...', 'info');
@@ -515,11 +500,32 @@ const App = Object.assign({}, AppState, {
     setButtonLoading(UI.generateNFTBtn, true);
     showWarning('⚠️ Do not close this tab until minting is complete and you have saved the ZIP file with your NFT files!', true);
 
+    // 🔥 SAGLABĀ DATUS PIRMS executeNFTMinting
+    const snapshotEthBalance = this.ethBalance ? this.ethBalance.toString() : "0";
+    const snapshotTxCount = this.txCount ? this.txCount.toString() : "0";
+    const snapshotTokenCount = this.tokens ? this.tokens.filter(t => !t.isNFT).length.toString() : "0";
+    const snapshotNftCount = this.tokens ? this.tokens.filter(t => t.isNFT).length.toString() : "0";
+    
+    const currentChainConfig = VIZ_CHAINS[this.currentVizChain];
+    const isAmoy = this.currentVizChain === 'polygonAmoy' || currentChainConfig?.chainIdHex?.toLowerCase() === '0x13882';
+    const nativeTokenSymbol = isAmoy ? 'POL' : (currentChainConfig?.nativeCurrency || 'ETH');
+    
+    const tokenList = this.tokens.filter(t => !t.isNFT).map(t => ({
+      symbol: t.symbol, address: t.address, balance: t.balance
+    }));
+    
+    const nftList = this.tokens.filter(t => t.isNFT).map(n => ({
+      symbol: n.symbol, address: n.address, tokenId: n.tokenId
+    }));
+
     const previousShowInfo = this.showInfo;
     this.showInfo = false;
     
     try {
-      await executeNFTMinting(this);
+      await executeNFTMinting(this, {
+        snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount,
+        nativeTokenSymbol, tokenList, nftList
+      });
     } catch (error) {
       console.error(error);
       let userMessage = 'Something went wrong. Please try again.';
