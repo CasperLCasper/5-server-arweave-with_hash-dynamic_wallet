@@ -217,6 +217,31 @@ export async function getNFTPrice() {
   }
 }
 
+// Palīgfunkcija tokena formatēšanai
+function formatToken(t) {
+  const decimals = t.decimals || 18;
+  const rawBalance = t.balance || "0";
+  
+  let formattedBalance = 0;
+  try {
+    formattedBalance = Number(ethers.formatUnits(rawBalance, decimals));
+    if (!Number.isFinite(formattedBalance)) {
+      formattedBalance = 0;
+    }
+  } catch {
+    formattedBalance = 0;
+  }
+  
+  const symbol = t.symbol || t.name || (t.contract || t.contractAddress || '').substring(0, 8) + '...';
+  
+  return {
+    address: t.contract || t.contractAddress || "",
+    balance: formattedBalance,
+    symbol: symbol,
+    isNFT: false
+  };
+}
+
 export async function getTokens(account, chain) {
   if (!account) return [];
   try {
@@ -229,29 +254,7 @@ export async function getTokens(account, chain) {
     
     if (!data?.tokens) return [];
     
-    return data.tokens.map(t => {
-      const decimals = t.decimals || 18;
-      const rawBalance = t.balance || "0";
-      
-      let formattedBalance = 0;
-      try {
-        formattedBalance = Number(ethers.formatUnits(rawBalance, decimals));
-        if (!Number.isFinite(formattedBalance)) {
-          formattedBalance = 0;
-        }
-      } catch {
-        formattedBalance = 0;
-      }
-      
-      const symbol = t.symbol || t.name || (t.contract || t.contractAddress || '').substring(0, 8) + '...';
-      
-      return {
-        address: t.contract || t.contractAddress || "",
-        balance: formattedBalance,
-        symbol: symbol,
-        isNFT: false
-      };
-    }).filter(t => t.balance > 0);
+    return data.tokens.map(formatToken).filter(t => t.balance > 0);
   } catch(e) { 
     console.error("GetTokens Error:", e); 
     return []; 
