@@ -263,7 +263,7 @@ const App = Object.assign({}, AppState, {
     }
     
     const mintResult = await this._finalizeMintAndSave(
-      serverData, mediaData.imageBlob, mediaData.videoBlob, imageHash, mediaData.imageFileName, mediaData.videoFileName,
+      serverData, mediaData.imageBlob, mediaData.videoBlob, imageHash, videoHash, mediaData.imageFileName, mediaData.videoFileName,
       snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount,
       nativeTokenSymbol, tokenList, nftList, tx, txValue
     );
@@ -368,7 +368,7 @@ const App = Object.assign({}, AppState, {
     return { imageBlob, imageFile, imageFileName, imageHash, videoBlob, videoFile, videoFileName, videoHash };
   },
 
-  async _finalizeMintAndSave(serverData, imageBlob, videoBlob, imageHash, imageFileName, videoFileName, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList, tx, txValue) {
+  async _finalizeMintAndSave(serverData, imageBlob, videoBlob, imageHash, videoHash, imageFileName, videoFileName, snapshotEthBalance, snapshotTxCount, snapshotTokenCount, snapshotNftCount, nativeTokenSymbol, tokenList, nftList, tx, txValue) {
     console.log('✅ Server processed:', serverData);
     
     const gw = ARWEAVE_GATEWAY;
